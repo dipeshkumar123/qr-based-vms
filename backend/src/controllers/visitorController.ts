@@ -73,8 +73,8 @@ export async function handleFindVisitor(req: Request, res: Response, next: NextF
 
 export async function handleDeleteVisitor(req: Request, res: Response, next: NextFunction) {
   try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) {
+    const id = req.params.id;
+    if (!id) {
       return res.status(400).json({ message: "Valid visitor id is required" });
     }
 

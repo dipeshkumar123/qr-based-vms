@@ -1,5 +1,5 @@
 export interface Visitor {
-  id: number;
+  _id?: string;
   name: string;
   email: string;
   phone: string;
@@ -7,7 +7,6 @@ export interface Visitor {
   status: "registered" | "checked_in";
   qrToken: string;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface CreateVisitorPayload {

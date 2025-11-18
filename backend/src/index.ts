@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import { ensureDatabaseConnection } from "./db/pool.js";
+import { connectMongo } from "./db/pool.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
 
@@ -16,6 +16,7 @@ function buildConfig(): ServerConfig {
 }
 
 async function bootstrap() {
+  await connectMongo();
   const app = express();
   const config = buildConfig();
 
@@ -29,7 +30,6 @@ async function bootstrap() {
   app.use("/api", visitorRoutes);
   app.use(errorHandler);
 
-  await ensureDatabaseConnection();
   app.listen(config.port, () => {
     console.log(`II-VMS backend running on port ${config.port}`);
   });

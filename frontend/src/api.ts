@@ -5,7 +5,7 @@ export const api = axios.create({
 });
 
 export interface Visitor {
-  id: number;
+  _id?: string;
   name: string;
   email: string;
   phone: string;
@@ -13,7 +13,6 @@ export interface Visitor {
   status: "registered" | "checked_in";
   qrToken: string;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface CreateVisitorPayload {
@@ -38,11 +37,11 @@ export async function checkInVisitor(token: string): Promise<Visitor> {
   return data;
 }
 
-export async function deleteVisitor(id: number): Promise<void> {
+export async function deleteVisitor(id: string): Promise<void> {
   await api.delete(`/visitors/${id}`);
 }
 
-export async function getLedger(): Promise<{ hash: string; visitorId: number; createdAt: string }[]> {
+export async function getLedger(): Promise<{ hash: string; visitorId: string; createdAt: string }[]> {
   const { data } = await api.get(`/ledger`);
   return data;
 }

@@ -5,51 +5,56 @@ This repository bootstraps the minimum viable product for the Intelligent, Integ
 ## Architecture
 
 ```
-frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ──SQL──► PostgreSQL
+frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ──NoSQL──► MongoDB
                                             │
                                             └── in-memory audit ledger hashes
 ```
 
 * **Frontend** (`frontend/`): visitor registration form, QR preview, visitor table with admin actions, and ledger viewer.
 * **Backend** (`backend/`): REST API for visitor CRUD, QR token generation, status updates, and ledger hashing placeholder.
-* **Database**: PostgreSQL schema for `visitors` and `audit_ledger` tables (later phases can plug in verification logs, etc.).
+* **Database**: MongoDB collection for `visitors` (audit ledger is in-memory for MVP).
 
 ## Prerequisites
 
 * Node.js 20+
 * pnpm, npm, or yarn (examples below use npm)
-* Docker Desktop (for the bundled PostgreSQL service)
+* MongoDB (local or Docker)
 
 ## Getting Started
 
-1. **Clone dependencies and install packages**
+1. **Install dependencies**
    ```powershell
-   cd d:\Projects\QR_Based_VMS
    npm install --prefix backend
    npm install --prefix frontend
    ```
 
-2. **Launch PostgreSQL**
-   ```powershell
-   docker compose up -d
-   ```
-   *The compose file seeds the `visitors` and `audit_ledger` tables automatically.*
-
-3. **Configure environment variables**
+2. **Create backend .env file**
    ```powershell
    Copy-Item backend/.env.example backend/.env
+   # Or manually create backend/.env with:
+   # PORT=4000
+   # CORS_ORIGIN=http://localhost:5173
+   # MONGODB_URI=mongodb://localhost:27017/ii_vms
    ```
-   Adjust `DATABASE_URL` if you are not using the bundled Docker service.
+
+3. **Start MongoDB**
+   You can run MongoDB locally or with Docker:
+   ```powershell
+   docker run -d -p 27017:27017 --name mongo mongo:latest
+   ```
+   Or use a local MongoDB installation.
 
 4. **Run the backend**
    ```powershell
-   npm run dev --prefix backend
+   cd backend
+   npm run dev
    ```
    The API listens on `http://localhost:4000`.
 
 5. **Run the frontend**
    ```powershell
-   npm run dev --prefix frontend
+   cd ../frontend
+   npm run dev
    ```
    Vite serves the UI on `http://localhost:5173`. API calls are proxied to the backend.
 

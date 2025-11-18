@@ -1,19 +1,18 @@
+import { MongoClient, Db } from "mongodb";
 import dotenv from "dotenv";
-import pg from "pg";
-
 dotenv.config();
 
-const { Pool } = pg;
+const uri = process.env.MONGODB_URI || "mongodb://localhost:27017/ii_vms";
+const dbName = uri.split("/").pop() || "ii_vms";
+let client: MongoClient;
+let db: Db;
 
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-export async function ensureDatabaseConnection(): Promise<void> {
-  try {
-    await pool.query("SELECT 1");
-  } catch (error) {
-    console.error("Database connection failed", error);
-    throw error;
+export async function connectMongo(): Promise<Db> {
+  if (!client) {
+    client = new MongoClient(uri);
+    await client.connect();
+    db = client.db(dbName);
+    console.log("MongoDB connected");
   }
+  return db;
 }
