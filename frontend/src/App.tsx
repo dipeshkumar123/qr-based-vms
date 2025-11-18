@@ -3,6 +3,7 @@ import { Visitor } from "./api";
 import { QrPreview } from "./components/QrPreview";
 import { VisitorForm } from "./components/VisitorForm";
 import { VisitorTable } from "./components/VisitorTable";
+import { LedgerPanel } from "./components/LedgerPanel";
 
 export default function App() {
   const [activeVisitor, setActiveVisitor] = useState<Visitor | null>(null);
@@ -17,8 +18,9 @@ export default function App() {
         <VisitorForm onSuccess={setActiveVisitor} />
         <QrPreview visitor={activeVisitor} />
       </main>
-      <section>
+      <section className="admin-grid">
         <VisitorTable onSelect={setActiveVisitor} />
+        <LedgerPanel />
       </section>
     </div>
   );

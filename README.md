@@ -10,7 +10,7 @@ frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ─�
                                             └── in-memory audit ledger hashes
 ```
 
-* **Frontend** (`frontend/`): visitor registration form, QR preview, and live visitor table.
+* **Frontend** (`frontend/`): visitor registration form, QR preview, visitor table with admin actions, and ledger viewer.
 * **Backend** (`backend/`): REST API for visitor CRUD, QR token generation, status updates, and ledger hashing placeholder.
 * **Database**: PostgreSQL schema for `visitors` and `audit_ledger` tables (later phases can plug in verification logs, etc.).
 
@@ -63,6 +63,13 @@ frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ─�
 | POST  | `/api/visitors/:token/check-in`| Mark visitor as checked-in           |
 | DELETE| `/api/visitors/:id`            | Remove a visitor record (admin)      |
 | GET   | `/api/ledger`                  | Inspect in-memory hash ledger        |
+
+## Admin console capabilities
+
+* **Check-in**: mark a visitor as arrived directly from the table.
+* **Delete**: remove erroneous or cancelled visits.
+* **Export CSV**: download the current visitor snapshot for compliance or reporting.
+* **Ledger viewer**: browse the SHA-256 ledger hashes to validate tamper resistance (updates every 30 seconds or on demand).
 
 ## Next steps from the roadmap
 
