@@ -23,7 +23,13 @@ export function QrPreview({ visitor, emptyMessage }: QrPreviewProps) {
         Present this code at the security checkpoint. Status: <strong>{visitor.status}</strong>
       </p>
       <div className="qr-wrapper">
-        <QRCodeSVG value={visitor.qrToken} size={180} />
+        <QRCodeSVG
+          value={visitor.qrToken}
+          size={192}
+          bgColor="#ffffff"
+          fgColor="#0f172a"
+          level="M"
+        />
       </div>
       <dl className="details">
         <div>
