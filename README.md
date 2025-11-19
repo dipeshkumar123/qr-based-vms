@@ -7,11 +7,11 @@ This repository bootstraps the minimum viable product for the Intelligent, Integ
 ```
 frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ──SQL──► PostgreSQL
                                             │
-                                            └── in-memory audit ledger hashes
+                                            └── persisted audit ledger hashes
 ```
 
 * **Frontend** (`frontend/`): visitor registration form, QR preview, visitor table with admin actions, and ledger viewer.
-* **Backend** (`backend/`): REST API for visitor CRUD, QR token generation, status updates, and ledger hashing placeholder.
+* **Backend** (`backend/`): REST API for visitor CRUD, QR token generation, status updates, and tamper-evident ledger hashing persisted in PostgreSQL.
 * **Database**: PostgreSQL schema for `visitors` and `audit_ledger` tables (later phases can plug in verification logs, etc.).
 
 ## Prerequisites
@@ -39,7 +39,7 @@ frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ─�
    ```powershell
    Copy-Item backend/.env.example backend/.env
    ```
-   Adjust `DATABASE_URL` if you are not using the bundled Docker service.
+   Adjust `DATABASE_URL` if you are not using the bundled Docker service. Set a strong `ADMIN_API_KEY` value – every management endpoint requires the header `x-admin-key` (or `Authorization: Bearer <key>`).
 
 4. **Run the backend**
    ```powershell
@@ -58,11 +58,12 @@ frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ─�
 | Method | Path                           | Description                          |
 |-------|--------------------------------|--------------------------------------|
 | POST  | `/api/visitors`                | Register a visitor & mint QR token   |
-| GET   | `/api/visitors`                | List visitors (newest first)         |
-| GET   | `/api/visitors/:token`         | Fetch visitor by QR token            |
-| POST  | `/api/visitors/:token/check-in`| Mark visitor as checked-in           |
+| GET   | `/api/visitors`                | List visitors (admin key required)   |
+| GET   | `/api/visitors/:token`         | Fetch visitor by QR token (admin)    |
+| POST  | `/api/visitors/:token/check-in`| Mark visitor as checked-in (admin)   |
 | DELETE| `/api/visitors/:id`            | Remove a visitor record (admin)      |
-| GET   | `/api/ledger`                  | Inspect in-memory hash ledger        |
+| GET   | `/api/ledger`                  | Inspect hash ledger (admin)          |
+| POST  | `/api/admin/verify`            | Validate an admin key                |
 
 ## Admin console capabilities
 
@@ -70,19 +71,20 @@ frontend (React + Vite) ──HTTP──► backend (Express + TypeScript) ─�
 * **Delete**: remove erroneous or cancelled visits.
 * **Export CSV**: download the current visitor snapshot for compliance or reporting.
 * **Ledger viewer**: browse the SHA-256 ledger hashes to validate tamper resistance (updates every 30 seconds or on demand).
+* **Admin authentication**: unlock controls with the configured key (stored securely in browser storage until logout or expiration).
 
 ## Next steps from the roadmap
 
 1. **Phase 2 biometrics**: create a Python FastAPI microservice for face matching and wire routing from Express.
-2. **Immutable storage**: persist ledger hashes into `audit_ledger` and add tamper detection jobs.
-3. **Dashboards & analytics**: add secured admin authentication, charts, and CSV export.
+2. **Immutable storage**: expand tamper detection with periodic integrity audits and alerting.
+3. **Dashboards & analytics**: add advanced charts, filters, and reporting.
 4. **Alerts**: integrate email/SMS notifications for important events (failed verification, repeated visits, etc.).
 
 ## Testing checklist
 
 - [ ] Submit a visitor via the form. Confirm QR appears and record shows in the table.
 - [ ] Copy the QR token and call `POST /api/visitors/{token}/check-in` (via UI or REST client). Status updates to `checked_in`.
-- [ ] Verify ledger endpoint returns SHA-256 hashes for create/check-in events.
-- [ ] Restart backend to confirm ledger resets (expected for MVP; upgrade in later phase).
+- [ ] Verify ledger endpoint returns SHA-256 hashes for create/check-in/delete events and that entries persist across restarts.
+- [ ] Confirm admin key prompts appear when performing management actions in a new browser session.
 
 This scaffold keeps the MVP focused, while leaving clear extension points for the biometric, ledger hardening, and analytics phases described in `project-detail.md`.

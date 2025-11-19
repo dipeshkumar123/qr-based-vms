@@ -22,6 +22,10 @@ async function bootstrap() {
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json());
 
+  if (!process.env.ADMIN_API_KEY) {
+    console.warn("ADMIN_API_KEY is not set; admin endpoints will be disabled.");
+  }
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });

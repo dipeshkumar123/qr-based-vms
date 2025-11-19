@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 interface VisitorTableProps {
   onSelect: (visitor: Visitor | null) => void;
+  enabled: boolean;
 }
 
 const csvCellNeedsEscaping = /[",\n]/;
@@ -47,12 +48,13 @@ function triggerCsvDownload(visitors: Visitor[]): void {
   URL.revokeObjectURL(url);
 }
 
-export function VisitorTable({ onSelect }: VisitorTableProps) {
+export function VisitorTable({ onSelect, enabled }: VisitorTableProps) {
   const [processingId, setProcessingId] = useState<number | null>(null);
   const { data, isFetching, refetch } = useQuery({
     queryKey: ["visitors"],
     queryFn: () => listVisitors(),
     refetchInterval: 10_000,
+    enabled,
   });
 
   const checkInMutation = useMutation({
@@ -72,47 +74,73 @@ export function VisitorTable({ onSelect }: VisitorTableProps) {
       <header className="table-header">
         <h2>Recent Visitors</h2>
         <div className="button-group">
-          <button type="button" onClick={() => refetch()} disabled={isFetching}>
+          <button type="button" onClick={() => refetch()} disabled={isFetching || !enabled}>
             {isFetching ? "Refreshing..." : "Refresh"}
           </button>
           <button
             type="button"
             className="secondary"
             onClick={() => triggerCsvDownload(visitors)}
-            disabled={visitors.length === 0}
+            disabled={visitors.length === 0 || !enabled}
           >
             Export CSV
           </button>
         </div>
       </header>
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Purpose</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visitors.map((visitor) => (
-            <tr key={visitor.id} className="clickable-row">
-              <td onClick={() => onSelect(visitor)}>{visitor.name}</td>
-              <td onClick={() => onSelect(visitor)}>{visitor.purpose}</td>
-              <td>
-                <span className={`status status-${visitor.status}`}>
-                  {visitor.status.replace("_", " ")}
-                </span>
-              </td>
-              <td>{new Date(visitor.createdAt).toLocaleString()}</td>
-              <td>
-                {visitor.status === "registered" ? (
+      {!enabled && (
+        <p className="card-subtitle">Sign in with the admin key to manage visitors.</p>
+      )}
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Purpose</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {enabled &&
+              visitors.map((visitor) => (
+              <tr key={visitor.id} className="clickable-row">
+                <td onClick={() => onSelect(visitor)}>{visitor.name}</td>
+                <td onClick={() => onSelect(visitor)}>{visitor.purpose}</td>
+                <td>
+                  <span className={`status status-${visitor.status}`}>
+                    {visitor.status.replace("_", " ")}
+                  </span>
+                </td>
+                <td>{new Date(visitor.createdAt).toLocaleString()}</td>
+                <td>
+                  {visitor.status === "registered" ? (
+                    <button
+                      onClick={async () => {
+                        setProcessingId(visitor.id);
+                        try {
+                          await checkInMutation.mutateAsync(visitor.qrToken);
+                        } catch (e) {
+                          console.error(e);
+                        } finally {
+                          setProcessingId(null);
+                        }
+                      }}
+                      disabled={processingId === visitor.id}
+                    >
+                      {processingId === visitor.id ? "Processing..." : "Check In"}
+                    </button>
+                  ) : (
+                    <em>Checked in</em>
+                  )}
                   <button
+                    className="danger"
                     onClick={async () => {
+                      if (!confirm(`Delete visitor ${visitor.name}?`)) return;
                       setProcessingId(visitor.id);
                       try {
-                        await checkInMutation.mutateAsync(visitor.qrToken);
+                        await deleteMutation.mutateAsync(visitor.id);
+                        onSelect(null);
                       } catch (e) {
                         console.error(e);
                       } finally {
@@ -121,41 +149,28 @@ export function VisitorTable({ onSelect }: VisitorTableProps) {
                     }}
                     disabled={processingId === visitor.id}
                   >
-                    {processingId === visitor.id ? "Processing..." : "Check In"}
+                    Delete
                   </button>
-                ) : (
-                  <em>Checked in</em>
-                )}
-                <button
-                  className="danger"
-                  onClick={async () => {
-                    if (!confirm(`Delete visitor ${visitor.name}?`)) return;
-                    setProcessingId(visitor.id);
-                    try {
-                      await deleteMutation.mutateAsync(visitor.id);
-                      onSelect(null);
-                    } catch (e) {
-                      console.error(e);
-                    } finally {
-                      setProcessingId(null);
-                    }
-                  }}
-                  disabled={processingId === visitor.id}
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {visitors.length === 0 && (
-            <tr>
-              <td colSpan={5} className="empty">
-                No visitors registered yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+                </td>
+              </tr>
+              ))}
+            {enabled && visitors.length === 0 && (
+              <tr>
+                <td colSpan={5} className="empty">
+                  No visitors registered yet.
+                </td>
+              </tr>
+            )}
+            {!enabled && (
+              <tr>
+                <td colSpan={5} className="empty">
+                  Admin authentication required.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

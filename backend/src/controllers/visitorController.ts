@@ -85,6 +85,11 @@ export async function handleDeleteVisitor(req: Request, res: Response, next: Nex
   }
 }
 
-export function handleListLedger(_req: Request, res: Response) {
-  res.json(getLedger());
+export async function handleListLedger(_req: Request, res: Response, next: NextFunction) {
+  try {
+    const ledger = await getLedger();
+    res.json(ledger);
+  } catch (error) {
+    next(error);
+  }
 }

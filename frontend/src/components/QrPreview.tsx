@@ -3,14 +3,15 @@ import { Visitor } from "../api";
 
 interface QrPreviewProps {
   visitor: Visitor | null;
+  emptyMessage?: string;
 }
 
-export function QrPreview({ visitor }: QrPreviewProps) {
+export function QrPreview({ visitor, emptyMessage }: QrPreviewProps) {
   if (!visitor) {
     return (
       <div className="card">
         <h2>QR Code</h2>
-        <p>Select a visitor or submit the form to see their QR token.</p>
+        <p>{emptyMessage ?? "Select a visitor or submit the form to see their QR token."}</p>
       </div>
     );
   }
