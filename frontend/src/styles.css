@@ -1,5 +1,26 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
+.instruction-card,
+.qr-instructions {
+  gap: 0.75rem;
+}
+
+.instruction-card h3,
+.qr-instructions h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.step-list,
+.qr-instructions ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
 :root {
   font-family: "Inter", "Segoe UI", Arial, sans-serif;
   color-scheme: dark light;
@@ -122,6 +143,28 @@ body {
   padding: 1rem 0;
 }
 
+.hero--management,
+.hero--visitor {
+  gap: 1rem;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: fit-content;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  background: rgba(79, 70, 229, 0.22);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  box-shadow: 0 10px 24px rgba(79, 70, 229, 0.35);
+}
+
 .hero h1 {
   margin: 0;
   font-size: clamp(2.25rem, 3vw + 1.5rem, 3.2rem);
@@ -135,10 +178,27 @@ body {
   font-size: 1.05rem;
 }
 
+.hero--visitor {
+  text-align: left;
+}
+
 .grid {
   display: grid;
   gap: clamp(1.1rem, 2vw, 1.75rem);
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.visitor-content {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.visitor-content .primary-column,
+.visitor-content .secondary-column {
+  display: grid;
+  gap: clamp(1.25rem, 2.5vw, 1.75rem);
+  min-width: 0;
 }
 
 .card {
@@ -175,6 +235,15 @@ body {
   letter-spacing: -0.01em;
 }
 
+.card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
 .card-subtitle {
   margin: -0.4rem 0 0.2rem;
   color: var(--text-secondary);
@@ -190,12 +259,104 @@ body {
   gap: 0.8rem;
   flex-wrap: wrap;
 }
+.guidance-card {
+  gap: 1rem;
+}
+
+.management-dashboard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.management-sidebar {
+  flex: 1 1 280px;
+  display: grid;
+  gap: clamp(1.25rem, 2.5vw, 1.75rem);
+  min-width: 260px;
+}
+
+.management-main {
+  flex: 2 1 520px;
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+  min-width: 0;
+}
+
+.management-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: clamp(1rem, 2.3vw, 1.5rem);
+}
+
+.stat-card {
+  background: rgba(12, 19, 38, 0.86);
+  border-radius: 16px;
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  padding: 1.4rem;
+  box-shadow: 0 16px 30px rgba(5, 8, 22, 0.45);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.stat-card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.stat-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.management-panels {
+  display: grid;
+  gap: clamp(1.3rem, 2.5vw, 1.75rem);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.management-primary {
+  min-width: 0;
+}
+
+.management-secondary {
+  display: grid;
+  gap: clamp(1.1rem, 2vw, 1.5rem);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
 
 label {
   display: grid;
   gap: 0.55rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.form-card {
+  gap: 1.1rem;
+}
+
+.form-card header {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.form-field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.form-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 input,
@@ -282,6 +443,55 @@ button.danger {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.table-controls {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.search-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  flex: 1 1 220px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  padding: 0.65rem 1.1rem;
+  background: rgba(12, 19, 38, 0.8);
+  color: var(--text-primary);
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chip[aria-pressed="true"] {
+  background: rgba(79, 70, 229, 0.25);
+  border-color: rgba(99, 102, 241, 0.6);
+  color: var(--text-primary);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 table {
@@ -503,6 +713,15 @@ tbody tr:hover {
   .table-wrapper table {
     min-width: 640px;
   }
+
+  .management-dashboard {
+    flex-direction: column;
+  }
+
+  .management-sidebar,
+  .management-main {
+    width: 100%;
+  }
 }
 
 @media (max-width: 640px) {
@@ -575,6 +794,10 @@ tbody tr:hover {
 
   .table-wrapper {
     max-height: clamp(20rem, 60vh, 26rem);
+  }
+
+  .management-secondary {
+    grid-template-columns: 1fr;
   }
 }
 

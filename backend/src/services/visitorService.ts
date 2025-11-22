@@ -62,17 +62,25 @@ export async function checkInVisitor(qrToken: string): Promise<Visitor | null> {
 }
 
 export async function deleteVisitor(id: number): Promise<void> {
-  const result = await pool.query<Visitor>(
-    `DELETE FROM visitors
-     WHERE id = $1
-     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"`,
+  const visitorResult = await pool.query<Visitor>(
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"
+     FROM visitors
+     WHERE id = $1`,
     [id]
   );
 
-  const deletedVisitor = result.rows[0];
-  if (deletedVisitor) {
-    await recordLedgerEntry(deletedVisitor, "deleted");
+  const visitor = visitorResult.rows[0];
+  if (!visitor) {
+    return;
   }
+
+  await recordLedgerEntry(visitor, "deleted");
+
+  await pool.query(
+    `DELETE FROM visitors
+     WHERE id = $1`,
+    [id]
+  );
 }
 
 export async function getLedger(): Promise<LedgerEntry[]> {
