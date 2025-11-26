@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import {
   checkInVisitor,
+  checkOutVisitor,
   createVisitor,
   deleteVisitor,
   findVisitorByQrToken,
@@ -43,6 +44,24 @@ export async function handleCheckIn(req: Request, res: Response, next: NextFunct
     }
 
     const visitor = await checkInVisitor(token);
+    if (!visitor) {
+      return res.status(404).json({ message: "Visitor not found" });
+    }
+
+    res.json(visitor);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleCheckOut(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token } = req.params;
+    if (!token) {
+      return res.status(400).json({ message: "QR token is required" });
+    }
+
+    const visitor = await checkOutVisitor(token);
     if (!visitor) {
       return res.status(404).json({ message: "Visitor not found" });
     }

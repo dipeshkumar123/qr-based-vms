@@ -4,8 +4,10 @@ export interface Visitor {
   email: string;
   phone: string;
   purpose: string;
-  status: "registered" | "checked_in";
+  status: "registered" | "checked_in" | "checked_out";
   qrToken: string;
+  checkedInAt: string | null;
+  checkedOutAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -3,7 +3,7 @@ import { pool } from "../db/pool.js";
 import { CreateVisitorPayload, Visitor } from "../types/visitor.js";
 import { v4 as uuidv4 } from "uuid";
 
-type LedgerEvent = "created" | "checked_in" | "deleted";
+type LedgerEvent = "created" | "checked_in" | "checked_out" | "deleted";
 
 export interface LedgerEntry {
   hash: string;
@@ -18,7 +18,9 @@ export async function createVisitor(payload: CreateVisitorPayload): Promise<Visi
   const result = await pool.query(
     `INSERT INTO visitors (name, email, phone, purpose, status, qr_token)
      VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"`,
+     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", 
+               checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+               created_at as "createdAt", updated_at as "updatedAt"`,
     [payload.name, payload.email, payload.phone, payload.purpose, status, qrToken]
   );
 
@@ -29,7 +31,9 @@ export async function createVisitor(payload: CreateVisitorPayload): Promise<Visi
 
 export async function listVisitors(): Promise<Visitor[]> {
   const result = await pool.query(
-    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"
      FROM visitors
      ORDER BY created_at DESC`
   );
@@ -38,7 +42,9 @@ export async function listVisitors(): Promise<Visitor[]> {
 
 export async function findVisitorByQrToken(qrToken: string): Promise<Visitor | null> {
   const result = await pool.query(
-    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"
      FROM visitors
      WHERE qr_token = $1`
   , [qrToken]);
@@ -47,11 +53,40 @@ export async function findVisitorByQrToken(qrToken: string): Promise<Visitor | n
 }
 
 export async function checkInVisitor(qrToken: string): Promise<Visitor | null> {
+  // First check if visitor exists and their current status
+  const checkResult = await pool.query(
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"
+     FROM visitors
+     WHERE qr_token = $1`,
+    [qrToken]
+  );
+
+  const existingVisitor = checkResult.rows[0] as Visitor;
+  
+  if (!existingVisitor) {
+    return null;
+  }
+
+  // If already checked in (and not checked out), throw an error
+  if (existingVisitor.status === 'checked_in') {
+    throw new Error('Visitor is already checked in. Please check out first.');
+  }
+
+  // If checked out, allow re-entry (new visit)
+  if (existingVisitor.status === 'checked_out') {
+    // This is a return visit - allow check-in again
+  }
+
+  // Update status to checked_in
   const result = await pool.query(
     `UPDATE visitors
-     SET status = 'checked_in', updated_at = NOW()
+     SET status = 'checked_in', checked_in_at = NOW(), updated_at = NOW()
      WHERE qr_token = $1
-     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"`
+     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", 
+               checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+               created_at as "createdAt", updated_at as "updatedAt"`
   , [qrToken]);
 
   const visitor = (result.rows[0] as Visitor) ?? null;
@@ -61,9 +96,54 @@ export async function checkInVisitor(qrToken: string): Promise<Visitor | null> {
   return visitor;
 }
 
+export async function checkOutVisitor(qrToken: string): Promise<Visitor | null> {
+  // First check if visitor exists and their current status
+  const checkResult = await pool.query(
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"
+     FROM visitors
+     WHERE qr_token = $1`,
+    [qrToken]
+  );
+
+  const existingVisitor = checkResult.rows[0] as Visitor;
+  
+  if (!existingVisitor) {
+    return null;
+  }
+
+  // Only allow check-out if currently checked in
+  if (existingVisitor.status === 'registered') {
+    throw new Error('Visitor has not checked in yet.');
+  }
+
+  if (existingVisitor.status === 'checked_out') {
+    throw new Error('Visitor is already checked out.');
+  }
+
+  // Update status to checked_out
+  const result = await pool.query(
+    `UPDATE visitors
+     SET status = 'checked_out', checked_out_at = NOW(), updated_at = NOW()
+     WHERE qr_token = $1
+     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", 
+               checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+               created_at as "createdAt", updated_at as "updatedAt"`
+  , [qrToken]);
+
+  const visitor = (result.rows[0] as Visitor) ?? null;
+  if (visitor) {
+    await recordLedgerEntry(visitor, "checked_out");
+  }
+  return visitor;
+}
+
 export async function deleteVisitor(id: number): Promise<void> {
   const visitorResult = await pool.query<Visitor>(
-    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", created_at as "createdAt", updated_at as "updatedAt"
+    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"
      FROM visitors
      WHERE id = $1`,
     [id]
@@ -102,10 +182,33 @@ async function recordLedgerEntry(visitor: Visitor, event: LedgerEvent): Promise<
     timestamp: new Date().toISOString(),
   });
 
-  const hash = createHash("sha256").update(payload).digest("hex");
-  await pool.query(
-    `INSERT INTO audit_ledger (visitor_id, hash)
-     VALUES ($1, $2)`,
-    [visitor.id, hash]
-  );
+  // Fetch previous hash (last inserted) to build chain for tamper resistance
+  let prevHash: string | null = null;
+  try {
+    const prevResult = await pool.query(
+      `SELECT hash FROM audit_ledger WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [visitor.id]
+    );
+    prevHash = prevResult.rows[0]?.hash ?? null;
+  } catch {
+    // Ignore; table may not exist yet or query fails
+  }
+
+  const chainPayload = JSON.stringify({ prevHash, current: payload });
+  const hash = createHash("sha256").update(chainPayload).digest("hex");
+
+  // Attempt to insert with prev_hash column first; fallback if column missing
+  try {
+    await pool.query(
+      `INSERT INTO audit_ledger (visitor_id, hash, prev_hash)
+       VALUES ($1, $2, $3)`,
+      [visitor.id, hash, prevHash]
+    );
+  } catch {
+    await pool.query(
+      `INSERT INTO audit_ledger (visitor_id, hash)
+       VALUES ($1, $2)`,
+      [visitor.id, hash]
+    );
+  }
 }

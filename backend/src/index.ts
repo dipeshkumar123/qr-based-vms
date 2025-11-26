@@ -3,6 +3,8 @@ import express from "express";
 import { ensureDatabaseConnection } from "./db/pool.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
+import aiRoutes from "./routes/aiRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 
 type ServerConfig = {
   port: number;
@@ -11,7 +13,9 @@ type ServerConfig = {
 
 function buildConfig(): ServerConfig {
   const port = Number(process.env.PORT ?? 4000);
-  const corsOrigin = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+  const corsOrigin = process.env.CORS_ORIGIN 
+    ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+    : ["http://localhost:5173", "http://localhost:5174"];
   return { port, corsOrigin };
 }
 
@@ -31,6 +35,8 @@ async function bootstrap() {
   });
 
   app.use("/api", visitorRoutes);
+  app.use("/api/ai", aiRoutes);
+  app.use("/api/analytics", analyticsRoutes);
   app.use(errorHandler);
 
   await ensureDatabaseConnection();

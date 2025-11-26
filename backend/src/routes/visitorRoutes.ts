@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   handleCheckIn,
+  handleCheckOut,
   handleCreateVisitor,
   handleDeleteVisitor,
   handleFindVisitor,
@@ -17,6 +18,7 @@ router.post("/admin/verify", requireAdminKey, handleAdminVerify);
 router.get("/visitors", requireAdminKey, handleListVisitors);
 router.get("/visitors/:token", requireAdminKey, handleFindVisitor);
 router.post("/visitors/:token/check-in", requireAdminKey, handleCheckIn);
+router.post("/visitors/:token/check-out", requireAdminKey, handleCheckOut);
 router.delete("/visitors/:id", requireAdminKey, handleDeleteVisitor);
 router.get("/ledger", requireAdminKey, handleListLedger);
 
