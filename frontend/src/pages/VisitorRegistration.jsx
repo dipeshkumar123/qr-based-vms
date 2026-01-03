@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import apiClient from '../lib/api';
+import PhotoCapture from '../components/PhotoCapture';
+import Modal from '../components/Modal';
 
 export default function VisitorRegistration() {
   const navigate = useNavigate();
@@ -11,6 +13,10 @@ export default function VisitorRegistration() {
   const [error, setError] = useState('');
   const [qrToken, setQrToken] = useState('');
   const [visitorData, setVisitorData] = useState(null);
+  const [showPhotoCapture, setShowPhotoCapture] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState('');
+  const [biometricStatus, setBiometricStatus] = useState(''); // 'pending', 'enrolled', 'failed'
+  const [biometricError, setBiometricError] = useState('');
   
   const [formData, setFormData] = useState({
     name: '',
@@ -30,23 +36,59 @@ export default function VisitorRegistration() {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setBiometricStatus('');
+    setBiometricError('');
 
     try {
       const response = await apiClient.post('/api/visitors', formData);
       setQrToken(response.data.qrToken);
       setVisitorData(response.data);
+
+      // If photo was captured, enroll in biometric system
+      if (capturedPhoto) {
+        await enrollBiometric(response.data.id, capturedPhoto);
+      }
+
       setSuccess(true);
-      
+
       // Record analytics event
       await apiClient.post('/api/analytics/events', {
         name: 'visitor_registered',
-        payload: { email: formData.email }
+        payload: { 
+          email: formData.email,
+          biometric_enrolled: !!capturedPhoto
+        }
       });
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const enrollBiometric = async (visitor_id, photo_base64) => {
+    try {
+      setBiometricStatus('pending');
+      const response = await apiClient.post('/api/biometric/capture', {
+        visitor_id,
+        photo_base64
+      });
+
+      if (response.data.success && response.data.encoding_saved) {
+        setBiometricStatus('enrolled');
+      } else {
+        setBiometricStatus('failed');
+        setBiometricError(response.data.message || 'Failed to enroll biometric');
+      }
+    } catch (err) {
+      setBiometricStatus('failed');
+      setBiometricError(err.response?.data?.message || 'Biometric enrollment failed');
+    }
+  };
+
+  const handlePhotoCaptured = (photoDataUrl) => {
+    setCapturedPhoto(photoDataUrl);
+    setShowPhotoCapture(false);
   };
 
   const downloadQRCode = () => {
@@ -102,6 +144,32 @@ export default function VisitorRegistration() {
             <p className="text-sm text-gray-500 mb-2 text-center">Your QR Token:</p>
             <p className="font-mono text-sm font-semibold break-all text-center text-gray-700">{qrToken}</p>
           </div>
+
+          {biometricStatus && (
+            <div className={`rounded-lg p-4 mb-6 ${
+              biometricStatus === 'enrolled' 
+                ? 'bg-green-50 border border-green-200' 
+                : biometricStatus === 'pending'
+                ? 'bg-yellow-50 border border-yellow-200'
+                : 'bg-red-50 border border-red-200'
+            }`}>
+              {biometricStatus === 'pending' && (
+                <p className="text-sm text-yellow-800">
+                  ⏳ Enrolling your face for biometric verification...
+                </p>
+              )}
+              {biometricStatus === 'enrolled' && (
+                <p className="text-sm text-green-800">
+                  ✅ <strong>Biometric verified!</strong> Your face has been enrolled for secure check-in.
+                </p>
+              )}
+              {biometricStatus === 'failed' && (
+                <p className="text-sm text-red-800">
+                  ❌ Biometric enrollment failed: {biometricError}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <p className="text-sm text-blue-800">
@@ -223,6 +291,42 @@ export default function VisitorRegistration() {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Face Photo for Biometric Verification (optional)
+              </label>
+              <p className="text-sm text-gray-600 mb-3">
+                Capture your face for secure biometric verification at check-in. This helps ensure proper visitor identification.
+              </p>
+              
+              {!capturedPhoto ? (
+                <button
+                  type="button"
+                  onClick={() => setShowPhotoCapture(true)}
+                  className="w-full px-4 py-3 border-2 border-dashed border-blue-300 rounded-lg text-blue-600 font-semibold hover:bg-blue-50 transition flex items-center justify-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Capture Face Photo
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  <div className="border-2 border-green-300 rounded-lg p-3 bg-green-50">
+                    <img src={capturedPhoto} alt="Captured face" className="w-full max-h-60 object-cover rounded" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCapturedPhoto('')}
+                    className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300"
+                  >
+                    Retake Photo
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
               type="submit"
               disabled={loading}
@@ -233,6 +337,18 @@ export default function VisitorRegistration() {
           </form>
         </div>
       </motion.div>
+
+      {/* Photo Capture Modal */}
+      <Modal
+        isOpen={showPhotoCapture}
+        onClose={() => setShowPhotoCapture(false)}
+        title="Capture Face Photo"
+      >
+        <PhotoCapture
+          onPhotoCaptured={handlePhotoCaptured}
+          onClose={() => setShowPhotoCapture(false)}
+        />
+      </Modal>
     </div>
   );
 }

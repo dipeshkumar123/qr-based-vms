@@ -4,15 +4,10 @@ import { persist } from 'zustand/middleware';
 export const useAuthStore = create(
   persist(
     (set) => ({
-      adminKey: null,
       isAdmin: false,
-      setAdminKey: (key) => {
-        localStorage.setItem('adminKey', key);
-        set({ adminKey: key, isAdmin: !!key });
-      },
+      setAdmin: (flag) => set({ isAdmin: !!flag }),
       logout: () => {
-        localStorage.removeItem('adminKey');
-        set({ adminKey: null, isAdmin: false });
+        set({ isAdmin: false });
       },
     }),
     {

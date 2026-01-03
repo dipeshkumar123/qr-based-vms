@@ -5,18 +5,29 @@ import { useAuthStore } from '../store/authStore';
 import apiClient from '../lib/api';
 import Modal from '../components/Modal';
 import QRScanner from '../components/QRScanner';
+import BiometricVerification from '../components/BiometricVerification';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { isAdmin, logout } = useAuthStore();
   const [visitors, setVisitors] = useState([]);
+  const [visitorsTotal, setVisitorsTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+
   const [ledger, setLedger] = useState([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerLimit, setLedgerLimit] = useState(50);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('visitors');
   const [searchTerm, setSearchTerm] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [scanMode, setScanMode] = useState('check-in'); // 'check-in' or 'check-out'
   const [scanMessage, setScanMessage] = useState({ type: '', text: '' });
+  const [verificationMessage, setVerificationMessage] = useState({ type: '', text: '' });
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [selectedVisitor, setSelectedVisitor] = useState(null);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -26,14 +37,23 @@ export default function AdminDashboard() {
     fetchData();
   }, [isAdmin, navigate]);
 
+  useEffect(() => {
+    if (!isAdmin) return;
+    setLoading(true);
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, searchTerm, ledgerPage, ledgerLimit]);
+
   const fetchData = async () => {
     try {
       const [visitorsRes, ledgerRes] = await Promise.all([
-        apiClient.get('/api/visitors'),
-        apiClient.get('/api/ledger')
+        apiClient.get('/api/visitors', { params: { page, limit, query: searchTerm || undefined } }),
+        apiClient.get('/api/ledger', { params: { page: ledgerPage, limit: ledgerLimit } })
       ]);
-      setVisitors(visitorsRes.data);
-      setLedger(ledgerRes.data);
+      setVisitors(visitorsRes.data.items || []);
+      setVisitorsTotal(visitorsRes.data.total || 0);
+      setLedger(ledgerRes.data.items || []);
+      setLedgerTotal(ledgerRes.data.total || 0);
     } catch (error) {
       console.error('Failed to fetch data:', error);
       if (error.response?.status === 401) {
@@ -110,14 +130,49 @@ export default function AdminDashboard() {
     }
   };
 
-  const filteredVisitors = visitors.filter(v =>
-    v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.phone.includes(searchTerm)
-  );
+  const openVerificationModal = (visitor) => {
+    setSelectedVisitor(visitor);
+    setVerificationMessage({ type: '', text: '' });
+    setShowVerificationModal(true);
+  };
+
+  const closeVerificationModal = () => {
+    setShowVerificationModal(false);
+    setSelectedVisitor(null);
+  };
+
+  const handleVerificationSuccess = async (result, visitor) => {
+    const confidenceText = `${(result.confidence_score * 100).toFixed(1)}% confidence`;
+    // Optionally auto-check-in when registered and match is true
+    if (visitor.status === 'registered' && result.is_match) {
+      try {
+        await apiClient.post(`/api/visitors/${visitor.qrToken}/check-in`);
+        setVerificationMessage({ type: 'success', text: `✅ Face verified (${confidenceText}) and visitor checked in.` });
+        fetchData();
+      } catch (err) {
+        const msg = err.response?.data?.message || err.message || 'Check-in failed after verification';
+        setVerificationMessage({ type: 'warning', text: `Face verified (${confidenceText}) but check-in failed: ${msg}` });
+      }
+    } else if (result.is_match) {
+      setVerificationMessage({ type: 'success', text: `✅ Face verified (${confidenceText}).` });
+    } else {
+      setVerificationMessage({ type: 'warning', text: `⚠️ Face did not match (${confidenceText}).` });
+    }
+    closeVerificationModal();
+    setTimeout(() => setVerificationMessage({ type: '', text: '' }), 6000);
+  };
+
+  const handleVerificationFailure = (payload) => {
+    const message = payload?.message || payload?.error || 'Verification failed. Please try again.';
+    setVerificationMessage({ type: 'error', text: `❌ ${message}` });
+    closeVerificationModal();
+    setTimeout(() => setVerificationMessage({ type: '', text: '' }), 6000);
+  };
+
+  const filteredVisitors = visitors; // server-side filtering
 
   const stats = {
-    total: visitors.length,
+    total: visitorsTotal,
     registered: visitors.filter(v => v.status === 'registered').length,
     checkedIn: visitors.filter(v => v.status === 'checked_in').length,
     checkedOut: visitors.filter(v => v.status === 'checked_out').length,
@@ -184,6 +239,23 @@ export default function AdminDashboard() {
               }`}
             >
               {scanMessage.text}
+            </motion.div>
+          )}
+
+          {/* Verification Message */}
+          {verificationMessage.text && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`mb-6 px-4 py-3 rounded-lg font-medium ${
+                verificationMessage.type === 'success' 
+                  ? 'bg-green-50 border border-green-200 text-green-700'
+                  : verificationMessage.type === 'warning'
+                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}
+            >
+              {verificationMessage.text}
             </motion.div>
           )}
 
@@ -280,7 +352,14 @@ export default function AdminDashboard() {
             <div className="p-6">
               {activeTab === 'visitors' && (
                 <>
-                  <div className="mb-6">
+                  {/* Info Banner for Biometric Verification */}
+                  <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
+                    <p className="text-sm text-blue-900">
+                      <strong>💡 Biometric Verification:</strong> For visitors with enrolled biometrics (✓ Enrolled), click "Verify Face" to authenticate them via facial recognition. On successful match, they will be automatically checked in.
+                    </p>
+                  </div>
+
+                  <div className="mb-6 flex items-center gap-3">
                     <input
                       type="text"
                       placeholder="Search by name, email, or phone..."
@@ -288,6 +367,10 @@ export default function AdminDashboard() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                       className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                     />
+                    <button
+                      onClick={() => { setPage(1); setLoading(true); fetchData(); }}
+                      className="px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold"
+                    >Search</button>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -299,6 +382,7 @@ export default function AdminDashboard() {
                           <th className="text-left py-3 px-4 font-semibold text-gray-700">Phone</th>
                           <th className="text-left py-3 px-4 font-semibold text-gray-700">Purpose</th>
                           <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
+                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Biometric</th>
                           <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
                         </tr>
                       </thead>
@@ -327,7 +411,30 @@ export default function AdminDashboard() {
                               </span>
                             </td>
                             <td className="py-3 px-4">
+                              {visitor.biometricEnrolled ? (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-semibold">
+                                  <span>✓</span> Enrolled
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
+                                  <span>○</span> Not Enrolled
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4">
                               <div className="flex gap-2">
+                                <button
+                                  onClick={() => openVerificationModal(visitor)}
+                                  disabled={!visitor.biometricEnrolled}
+                                  className={`px-3 py-1 rounded text-sm font-semibold transition ${
+                                    visitor.biometricEnrolled
+                                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                  }`}
+                                  title={visitor.biometricEnrolled ? 'Verify face' : 'Visitor has not enrolled biometrics'}
+                                >
+                                  Verify Face
+                                </button>
                                 {visitor.status === 'registered' && (
                                   <button
                                     onClick={() => handleCheckIn(visitor.qrToken)}
@@ -357,6 +464,18 @@ export default function AdminDashboard() {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Pagination */}
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="text-sm text-gray-600">Page {page} of {Math.max(1, Math.ceil(visitorsTotal / limit))} • {visitorsTotal} total</div>
+                    <div className="flex items-center gap-2">
+                      <button disabled={page <= 1} onClick={() => { setPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Prev</button>
+                      <button disabled={page >= Math.ceil(visitorsTotal / limit)} onClick={() => { setPage(p => p + 1); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Next</button>
+                      <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); setLoading(true); fetchData(); }} className="ml-2 border rounded px-2 py-1">
+                        {[10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
+                      </select>
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -380,6 +499,16 @@ export default function AdminDashboard() {
                       ))}
                     </tbody>
                   </table>
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="text-sm text-gray-600">Page {ledgerPage} of {Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))} • {ledgerTotal} total</div>
+                    <div className="flex items-center gap-2">
+                      <button disabled={ledgerPage <= 1} onClick={() => { setLedgerPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Prev</button>
+                      <button disabled={ledgerPage >= Math.ceil(ledgerTotal / ledgerLimit)} onClick={() => { setLedgerPage(p => p + 1); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Next</button>
+                      <select value={ledgerLimit} onChange={(e) => { setLedgerLimit(Number(e.target.value)); setLedgerPage(1); setLoading(true); fetchData(); }} className="ml-2 border rounded px-2 py-1">
+                        {[25,50,100,200].map(n => <option key={n} value={n}>{n}/page</option>)}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -397,6 +526,22 @@ export default function AdminDashboard() {
           onScanSuccess={handleScanSuccess}
           onClose={() => setShowScanner(false)}
         />
+      </Modal>
+
+      {/* Biometric Verification Modal */}
+      <Modal
+        isOpen={showVerificationModal && !!selectedVisitor}
+        onClose={closeVerificationModal}
+        title={selectedVisitor ? `Verify ${selectedVisitor.name}` : 'Verify Visitor'}
+      >
+        {selectedVisitor && (
+          <BiometricVerification
+            visitor={selectedVisitor}
+            onVerified={(result) => handleVerificationSuccess(result, selectedVisitor)}
+            onFailed={handleVerificationFailure}
+            onClose={closeVerificationModal}
+          />
+        )}
       </Modal>
     </div>
   );

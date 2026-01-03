@@ -1,10 +1,15 @@
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import cookieParser from "cookie-parser";
 import { ensureDatabaseConnection } from "./db/pool.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import biometricRoutes from "./routes/biometricRoutes.js";
 
 type ServerConfig = {
   port: number;
@@ -23,8 +28,11 @@ async function bootstrap() {
   const app = express();
   const config = buildConfig();
 
-  app.use(cors({ origin: config.corsOrigin }));
-  app.use(express.json());
+  app.use(cors({ origin: config.corsOrigin, credentials: true }));
+  app.use(helmet());
+  app.use(cookieParser());
+  app.use(rateLimit({ windowMs: 60_000, max: 200 }));
+  app.use(express.json({ limit: '10mb' })); // Increased limit for biometric photos
 
   if (!process.env.ADMIN_API_KEY) {
     console.warn("ADMIN_API_KEY is not set; admin endpoints will be disabled.");
@@ -34,9 +42,20 @@ async function bootstrap() {
     res.json({ status: "ok" });
   });
 
+  app.get("/ready", async (_req, res) => {
+    try {
+      await ensureDatabaseConnection();
+      res.json({ status: "ready" });
+    } catch {
+      res.status(503).json({ status: "degraded" });
+    }
+  });
+
+  app.use("/api/admin", adminRoutes);
   app.use("/api", visitorRoutes);
   app.use("/api/ai", aiRoutes);
   app.use("/api/analytics", analyticsRoutes);
+  app.use("/api/biometric", biometricRoutes);
   app.use(errorHandler);
 
   await ensureDatabaseConnection();

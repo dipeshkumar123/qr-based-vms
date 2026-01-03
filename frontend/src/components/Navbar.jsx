@@ -28,6 +28,9 @@ export default function Navbar() {
             {isAdmin ? (
               <>
                 <Link to="/admin/dashboard" className="text-gray-700 hover:text-blue-600 transition">Dashboard</Link>
+                <Link to="/admin/analytics" className="text-gray-700 hover:text-blue-600 transition">Analytics</Link>
+                <Link to="/admin/audit-ledger" className="text-gray-700 hover:text-blue-600 transition">Audit Ledger</Link>
+                <Link to="/admin/notifications" className="text-gray-700 hover:text-blue-600 transition">Notifications</Link>
                 <button 
                   onClick={logout}
                   className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition"

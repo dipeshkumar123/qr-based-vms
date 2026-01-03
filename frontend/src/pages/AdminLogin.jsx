@@ -6,7 +6,7 @@ import apiClient from '../lib/api';
 
 export default function AdminLogin() {
   const navigate = useNavigate();
-  const { setAdminKey } = useAuthStore();
+  const { setAdmin } = useAuthStore();
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,16 +17,13 @@ export default function AdminLogin() {
     setError('');
 
     try {
-      // Verify the admin key
-      const response = await apiClient.post('/api/admin/verify', {}, {
-        headers: {
-          'x-admin-key': key
-        }
-      });
-
-      if (response.status === 204) {
-        setAdminKey(key);
+      // Login with admin key -> server issues httpOnly cookie
+      const response = await apiClient.post('/api/admin/login', { key });
+      if (response.status === 200) {
+        setAdmin(true);
         navigate('/admin/dashboard');
+      } else {
+        setError('Invalid admin key. Please try again.');
       }
     } catch (err) {
       setError('Invalid admin key. Please try again.');

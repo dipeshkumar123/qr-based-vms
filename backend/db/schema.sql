@@ -20,5 +20,19 @@ CREATE TABLE IF NOT EXISTS audit_ledger (
   id SERIAL PRIMARY KEY,
   visitor_id INTEGER NOT NULL REFERENCES visitors(id) ON DELETE CASCADE,
   hash TEXT NOT NULL,
+  prev_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Optional analytics events table
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  payload JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Helpful indexes
+CREATE INDEX IF NOT EXISTS idx_visitors_status ON visitors(status);
+CREATE INDEX IF NOT EXISTS idx_visitors_created_at ON visitors(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_ledger_visitor ON audit_ledger(visitor_id, created_at DESC);

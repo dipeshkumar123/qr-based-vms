@@ -10,6 +10,7 @@ export interface Visitor {
   checkedOutAt: string | null;
   createdAt: string;
   updatedAt: string;
+  biometricEnrolled?: boolean;
 }
 
 export interface CreateVisitorPayload {
@@ -17,4 +18,5 @@ export interface CreateVisitorPayload {
   email: string;
   phone: string;
   purpose: string;
+  photoUrl?: string;
 }

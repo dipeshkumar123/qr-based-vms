@@ -8,6 +8,8 @@ import {
   findVisitorByQrToken,
   getLedger,
   listVisitors,
+  verifyLedgerLinks,
+  generateAuditReport,
 } from "../services/visitorService.js";
 
 const createVisitorSchema = z.object({
@@ -27,10 +29,18 @@ export async function handleCreateVisitor(req: Request, res: Response, next: Nex
   }
 }
 
-export async function handleListVisitors(_req: Request, res: Response, next: NextFunction) {
+const listVisitorsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  query: z.string().optional(),
+  status: z.enum(["registered", "checked_in", "checked_out", "all"]).optional(),
+});
+
+export async function handleListVisitors(req: Request, res: Response, next: NextFunction) {
   try {
-    const visitors = await listVisitors();
-    res.json(visitors);
+    const { page, limit, query, status } = listVisitorsQuerySchema.parse(req.query);
+    const result = await listVisitors({ page, limit, query, status });
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -104,10 +114,34 @@ export async function handleDeleteVisitor(req: Request, res: Response, next: Nex
   }
 }
 
-export async function handleListLedger(_req: Request, res: Response, next: NextFunction) {
+const listLedgerQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+export async function handleListLedger(req: Request, res: Response, next: NextFunction) {
   try {
-    const ledger = await getLedger();
+    const { page, limit } = listLedgerQuerySchema.parse(req.query);
+    const ledger = await getLedger(page, limit);
     res.json(ledger);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleVerifyLedger(_req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await verifyLedgerLinks();
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleAuditReport(_req: Request, res: Response, next: NextFunction) {
+  try {
+    const report = await generateAuditReport();
+    res.json(report);
   } catch (error) {
     next(error);
   }
