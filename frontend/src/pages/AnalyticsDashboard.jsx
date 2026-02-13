@@ -37,21 +37,28 @@ const AnalyticsDashboard = () => {
       setError(null);
 
       const [reportRes, peakRes, frequentRes, suspiciousRes, trendsRes] = await Promise.all([
-        api.get(`/api/analytics/report?days=${days}`),
-        api.get(`/api/analytics/peak-hours?days=${days}`),
-        api.get(`/api/analytics/frequent-visitors?limit=10`),
-        api.get(`/api/analytics/suspicious-activity?threshold=0.05`),
-        api.get(`/api/analytics/trends?days=${days}`),
+        api.get(`/api/analytics/report?days=${days}`).catch(e => ({ data: { summary: {} } })),
+        api.get(`/api/analytics/peak-hours?days=${days}`).catch(e => ({ data: { forecast: {}, peak_hours: [], error: null } })),
+        api.get(`/api/analytics/frequent-visitors?limit=10`).catch(e => ({ data: { visitors: [] } })),
+        api.get(`/api/analytics/suspicious-activity?threshold=0.05`).catch(e => ({ data: { suspicious_visitors: [] } })),
+        api.get(`/api/analytics/trends?days=${days}`).catch(e => ({ data: { trends: [] } })),
       ]);
 
-      setAnalytics(reportRes.data);
-      setPeakHours(peakRes.data);
-      setFrequentVisitors(frequentRes.data?.visitors || []);
-      setSuspiciousActivity(suspiciousRes.data);
-      setTrends(trendsRes.data?.trends || []);
+      // Safely extract data with fallbacks
+      const analyticsData = reportRes.data || { summary: {} };
+      const peakHoursData = peakRes.data || { forecast: {}, peak_hours: [], error: null };
+      const frequentVisitorsData = frequentRes.data?.visitors || [];
+      const suspiciousActivityData = suspiciousRes.data || { suspicious_visitors: [] };
+      const trendsData = Array.isArray(trendsRes.data?.trends) ? trendsRes.data.trends : [];
+
+      setAnalytics(analyticsData);
+      setPeakHours(peakHoursData);
+      setFrequentVisitors(frequentVisitorsData);
+      setSuspiciousActivity(suspiciousActivityData);
+      setTrends(trendsData);
     } catch (err) {
       console.error('Analytics fetch error:', err);
-      setError(err.response?.data?.error || 'Failed to load analytics');
+      setError('Failed to load analytics data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -89,14 +96,14 @@ const AnalyticsDashboard = () => {
         </div>
 
         {/* Time Period Selector */}
-        <div className="mb-6 flex gap-4">
+        <div className="mb-8 flex flex-wrap gap-2 sm:gap-3">
           {[7, 14, 30, 60, 90].map((d) => (
             <button
               key={d}
               onClick={() => setDays(d)}
-              className={`px-4 py-2 rounded-lg font-medium transition ${
+              className={`px-4 py-2 rounded-lg font-semibold transition transform hover:scale-105 ${
                 days === d
-                  ? 'bg-blue-600 text-white'
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
                   : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }`}
             >
@@ -152,36 +159,45 @@ const AnalyticsDashboard = () => {
         {/* Charts Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Peak Hours */}
-          {peakHoursData.length > 0 && (
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <h2 className="text-xl font-bold text-white mb-4">Peak Hours Forecast</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={peakHoursData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
-                  <XAxis dataKey="hour" stroke="#94a3b8" />
-                  <YAxis stroke="#94a3b8" />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
-                    labelStyle={{ color: '#e2e8f0' }}
-                  />
-                  <Bar dataKey="visits" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              {peakHours?.peak_hours && (
-                <div className="mt-4 p-3 bg-blue-900/30 rounded-lg border border-blue-700">
-                  <p className="text-sm text-blue-200">
-                    <span className="font-bold">Peak Hours:</span>{' '}
-                    {peakHours.peak_hours.map((h) => `${h}:00`).join(', ')}
-                  </p>
+          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+            <h2 className="text-xl font-bold text-white mb-4">Peak Hours Forecast</h2>
+            {peakHoursData.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={peakHoursData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
+                    <XAxis dataKey="hour" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
+                      labelStyle={{ color: '#e2e8f0' }}
+                    />
+                    <Bar dataKey="visits" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                {peakHours?.peak_hours && peakHours.peak_hours.length > 0 && (
+                  <div className="mt-4 p-3 bg-blue-900/30 rounded-lg border border-blue-700">
+                    <p className="text-sm text-blue-200">
+                      <span className="font-bold">Peak Hours:</span>{' '}
+                      {peakHours.peak_hours.map((h) => `${h}:00`).join(', ')}
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="h-80 flex items-center justify-center text-slate-400">
+                <div className="text-center">
+                  <p className="text-sm mb-2">Insufficient data to forecast peak hours</p>
+                  <p className="text-xs text-slate-500">Need more visitor activity history</p>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
 
           {/* Visitor Trends */}
-          {trendsData.length > 0 && (
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <h2 className="text-xl font-bold text-white mb-4">Visitor Trends</h2>
+          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+            <h2 className="text-xl font-bold text-white mb-4">Visitor Trends</h2>
+            {trendsData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={trendsData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
@@ -201,14 +217,21 @@ const AnalyticsDashboard = () => {
                   />
                 </LineChart>
               </ResponsiveContainer>
-            </div>
-          )}
+            ) : (
+              <div className="h-80 flex items-center justify-center text-slate-400">
+                <div className="text-center">
+                  <p className="text-sm mb-2">No visitor trend data available</p>
+                  <p className="text-xs text-slate-500">Trends will appear as data accumulates</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Frequent Visitors Table */}
-        {frequentVisitors && frequentVisitors.length > 0 && (
-          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600 mb-8">
-            <h2 className="text-xl font-bold text-white mb-4">Frequent Visitors</h2>
+        <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600 mb-8">
+          <h2 className="text-xl font-bold text-white mb-4">Frequent Visitors</h2>
+          {frequentVisitors && frequentVisitors.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -239,49 +262,52 @@ const AnalyticsDashboard = () => {
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="p-8 text-center text-slate-400">
+              <p className="text-sm mb-1">No frequent visitors yet</p>
+              <p className="text-xs text-slate-500">Visitors with multiple check-ins will appear here</p>
+            </div>
+          )}
+        </div>
 
         {/* Suspicious Activity Alerts */}
-        {suspiciousActivity?.suspicious_visitors && suspiciousActivity.suspicious_visitors.length > 0 && (
-          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <span className="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></span>
-              Suspicious Activity Detected
-            </h2>
-            <div className="space-y-3">
-              {suspiciousActivity.suspicious_visitors.map((visitor, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 bg-orange-900/20 border border-orange-700 rounded-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium text-white">{visitor.name || 'Unknown Visitor'}</p>
-                      <p className="text-sm text-orange-300 mt-1">{visitor.reason}</p>
-                      <div className="flex gap-4 mt-2 text-xs text-slate-400">
-                        <span>Visits: {visitor.visitCount || 0}</span>
-                        <span>Failed: {visitor.failedVerifications || 0}</span>
-                        <span>Frequency: {visitor.visitFrequency?.toFixed(2) || 0}/day</span>
-                        <span>Score: {visitor.suspicionScore?.toFixed(3) || 0}</span>
+        <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+          {suspiciousActivity?.suspicious_visitors && suspiciousActivity.suspicious_visitors.length > 0 ? (
+            <>
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <span className="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></span>
+                Suspicious Activity Detected ({suspiciousActivity.suspicious_visitors.length})
+              </h2>
+              <div className="space-y-3">
+                {suspiciousActivity.suspicious_visitors.map((visitor, idx) => (
+                  <div
+                    key={idx}
+                    className="p-4 bg-orange-900/20 border border-orange-700 rounded-lg"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium text-white">{visitor.name || 'Unknown Visitor'}</p>
+                        <p className="text-sm text-orange-300 mt-1">{visitor.reason}</p>
+                        <div className="flex gap-4 mt-2 text-xs text-slate-400 flex-wrap">
+                          <span>Visits: {visitor.visitCount || 0}</span>
+                          <span>Failed: {visitor.failedVerifications || 0}</span>
+                          <span>Frequency: {visitor.visitFrequency?.toFixed(2) || 0}/day</span>
+                          <span>Score: {Math.abs(visitor.suspicionScore || 0).toFixed(3)}</span>
+                        </div>
                       </div>
+                      <span className="text-2xl flex-shrink-0">⚠️</span>
                     </div>
-                    <span className="text-2xl">⚠️</span>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!suspiciousActivity?.suspicious_visitors?.length && (
-          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-            <div className="text-center">
-              <p className="text-green-400 font-medium mb-2">✓ No Suspicious Activity</p>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-green-400 font-medium mb-2 text-lg">✓ No Suspicious Activity</p>
               <p className="text-slate-400 text-sm">All visitor patterns appear normal</p>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

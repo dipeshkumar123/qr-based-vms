@@ -138,22 +138,25 @@ class AnalyticsEngine:
 
     def get_frequent_visitors(self, limit: int = 10, min_visits: int = 2) -> List[Dict]:
         """
-        Identify frequent visitors based on check-in history
+        Identify frequent visitors based on check-in events
+        Uses analytics_events (visitor_check_in) to support repeat visits
         """
         try:
             query = """
-            SELECT 
+            SELECT
                 v.id as visitor_id,
                 v.name,
                 v.email,
-                COUNT(*) as visit_count,
-                MAX(v.checked_in_at) as last_visit,
-                MIN(v.created_at) as first_visit,
-                ROUND((EXTRACT(EPOCH FROM MAX(v.checked_in_at) - MIN(v.created_at)) / 86400)::numeric, 1) as days_as_visitor
+                COUNT(ae.*) as visit_count,
+                MAX(ae.created_at) as last_visit,
+                MIN(ae.created_at) as first_visit,
+                ROUND((EXTRACT(EPOCH FROM MAX(ae.created_at) - MIN(ae.created_at)) / 86400)::numeric, 1) as days_as_visitor
             FROM visitors v
-            WHERE v.checked_in_at IS NOT NULL
+            JOIN analytics_events ae
+              ON (ae.payload->>'visitor_id')::int = v.id
+             AND ae.name = 'visitor_check_in'
             GROUP BY v.id, v.name, v.email
-            HAVING COUNT(*) >= %s
+            HAVING COUNT(ae.*) >= %s
             ORDER BY visit_count DESC
             LIMIT %s
             """

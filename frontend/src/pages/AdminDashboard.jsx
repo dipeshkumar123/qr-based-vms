@@ -374,104 +374,115 @@ export default function AdminDashboard() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gray-200">
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Name</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Email</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Phone</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Purpose</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Biometric</th>
-                          <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredVisitors.map((visitor) => (
-                          <tr key={visitor.id} className="border-b border-gray-100 hover:bg-gray-50">
-                            <td className="py-3 px-4">{visitor.name}</td>
-                            <td className="py-3 px-4">{visitor.email}</td>
-                            <td className="py-3 px-4">{visitor.phone}</td>
-                            <td className="py-3 px-4">{visitor.purpose}</td>
-                            <td className="py-3 px-4">
-                              <span
-                                className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                                  visitor.status === 'checked_in'
-                                    ? 'bg-green-100 text-green-700'
-                                    : visitor.status === 'checked_out'
-                                    ? 'bg-gray-100 text-gray-700'
-                                    : 'bg-yellow-100 text-yellow-700'
-                                }`}
-                              >
-                                {visitor.status === 'checked_in' 
-                                  ? 'Checked In' 
-                                  : visitor.status === 'checked_out'
-                                  ? 'Checked Out'
-                                  : 'Registered'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4">
-                              {visitor.biometricEnrolled ? (
-                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-semibold">
-                                  <span>✓</span> Enrolled
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
-                                  <span>○</span> Not Enrolled
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-4">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => openVerificationModal(visitor)}
-                                  disabled={!visitor.biometricEnrolled}
-                                  className={`px-3 py-1 rounded text-sm font-semibold transition ${
-                                    visitor.biometricEnrolled
-                                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                                  }`}
-                                  title={visitor.biometricEnrolled ? 'Verify face' : 'Visitor has not enrolled biometrics'}
-                                >
-                                  Verify Face
-                                </button>
-                                {visitor.status === 'registered' && (
-                                  <button
-                                    onClick={() => handleCheckIn(visitor.qrToken)}
-                                    className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-                                  >
-                                    Check In
-                                  </button>
-                                )}
-                                {visitor.status === 'checked_in' && (
-                                  <button
-                                    onClick={() => handleCheckOut(visitor.qrToken)}
-                                    className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm"
-                                  >
-                                    Check Out
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => handleDelete(visitor.id)}
-                                  className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </td>
+                    {filteredVisitors.length === 0 ? (
+                      <div className="text-center py-12">
+                        <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.856-1.487M15 10a3 3 0 11-6 0 3 3 0 016 0zM6 20h12a6 6 0 00-6-6 6 6 0 00-6 6z" />
+                        </svg>
+                        <p className="text-gray-500 text-lg">No visitors found</p>
+                        <p className="text-gray-400 text-sm">Registered visitors will appear here</p>
+                      </div>
+                    ) : (
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200">
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Name</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Email</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Phone</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Status</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Biometric</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {filteredVisitors.map((visitor) => (
+                            <tr key={visitor.id} className="border-b border-gray-100 hover:bg-blue-50 transition">
+                              <td className="py-4 px-4 font-medium text-gray-900">{visitor.name}</td>
+                              <td className="py-4 px-4 text-gray-600 text-sm">{visitor.email}</td>
+                              <td className="py-4 px-4 text-gray-600 text-sm">{visitor.phone}</td>
+                              <td className="py-4 px-4">
+                                <span
+                                  className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                    visitor.status === 'checked_in'
+                                      ? 'bg-green-100 text-green-800'
+                                      : visitor.status === 'checked_out'
+                                      ? 'bg-gray-100 text-gray-700'
+                                      : 'bg-yellow-100 text-yellow-800'
+                                  }`}
+                                >
+                                  {visitor.status === 'checked_in' 
+                                    ? '✓ In' 
+                                    : visitor.status === 'checked_out'
+                                    ? '✓ Out'
+                                    : 'Registered'}
+                                </span>
+                              </td>
+                              <td className="py-4 px-4">
+                                {visitor.biometricEnrolled ? (
+                                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">
+                                    ✓ Enrolled
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
+                                    ○ None
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-4 px-4">
+                                <div className="flex gap-2 flex-wrap">
+                                  <button
+                                    onClick={() => openVerificationModal(visitor)}
+                                    disabled={!visitor.biometricEnrolled}
+                                    className={`px-3 py-1 rounded text-xs font-semibold transition ${
+                                      visitor.biometricEnrolled
+                                        ? 'bg-purple-600 text-white hover:bg-purple-700'
+                                        : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                    }`}
+                                    title={visitor.biometricEnrolled ? 'Verify face' : 'Visitor has not enrolled biometrics'}
+                                  >
+                                    Verify
+                                  </button>
+                                  {visitor.status === 'registered' && (
+                                    <button
+                                      onClick={() => handleCheckIn(visitor.qrToken)}
+                                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs font-semibold"
+                                    >
+                                      In
+                                    </button>
+                                  )}
+                                  {visitor.status === 'checked_in' && (
+                                    <button
+                                      onClick={() => handleCheckOut(visitor.qrToken)}
+                                      className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-xs font-semibold"
+                                    >
+                                      Out
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleDelete(visitor.id)}
+                                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs font-semibold"
+                                  >
+                                    Del
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
 
                   {/* Pagination */}
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-gray-600">Page {page} of {Math.max(1, Math.ceil(visitorsTotal / limit))} • {visitorsTotal} total</div>
+                  <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">
+                    <div className="text-sm text-gray-600">
+                      Showing <span className="font-semibold">{filteredVisitors.length === 0 ? 0 : (page - 1) * limit + 1}</span> to <span className="font-semibold">{Math.min(page * limit, visitorsTotal)}</span> of <span className="font-semibold">{visitorsTotal}</span> visitors
+                    </div>
                     <div className="flex items-center gap-2">
-                      <button disabled={page <= 1} onClick={() => { setPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Prev</button>
-                      <button disabled={page >= Math.ceil(visitorsTotal / limit)} onClick={() => { setPage(p => p + 1); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Next</button>
-                      <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); setLoading(true); fetchData(); }} className="ml-2 border rounded px-2 py-1">
+                      <button disabled={page <= 1} onClick={() => { setPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">← Prev</button>
+                      <span className="px-4 py-2 bg-gray-50 rounded font-semibold text-gray-700">{page} / {Math.max(1, Math.ceil(visitorsTotal / limit))}</span>
+                      <button disabled={page >= Math.ceil(visitorsTotal / limit)} onClick={() => { setPage(p => p + 1); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">Next →</button>
+                      <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); setLoading(true); fetchData(); }} className="border border-gray-300 rounded px-3 py-2 text-gray-700 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                         {[10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
                       </select>
                     </div>
@@ -481,34 +492,49 @@ export default function AdminDashboard() {
 
               {activeTab === 'ledger' && (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Visitor ID</th>
-                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Hash</th>
-                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Timestamp</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ledger.map((entry, idx) => (
-                        <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-3 px-4">{entry.visitorId}</td>
-                          <td className="py-3 px-4 font-mono text-sm">{entry.hash.substring(0, 16)}...</td>
-                          <td className="py-3 px-4">{new Date(entry.createdAt).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-gray-600">Page {ledgerPage} of {Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))} • {ledgerTotal} total</div>
-                    <div className="flex items-center gap-2">
-                      <button disabled={ledgerPage <= 1} onClick={() => { setLedgerPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Prev</button>
-                      <button disabled={ledgerPage >= Math.ceil(ledgerTotal / ledgerLimit)} onClick={() => { setLedgerPage(p => p + 1); setLoading(true); fetchData(); }} className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50">Next</button>
-                      <select value={ledgerLimit} onChange={(e) => { setLedgerLimit(Number(e.target.value)); setLedgerPage(1); setLoading(true); fetchData(); }} className="ml-2 border rounded px-2 py-1">
-                        {[25,50,100,200].map(n => <option key={n} value={n}>{n}/page</option>)}
-                      </select>
+                  {ledger.length === 0 ? (
+                    <div className="text-center py-12">
+                      <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <p className="text-gray-500 text-lg">No ledger entries yet</p>
+                      <p className="text-gray-400 text-sm">Visitor actions will appear here</p>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-200">
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Visitor ID</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Hash</th>
+                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Timestamp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ledger.map((entry, idx) => (
+                            <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50 transition">
+                              <td className="py-4 px-4 font-semibold text-gray-900">{entry.visitorId}</td>
+                              <td className="py-4 px-4 font-mono text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 inline-block">{entry.hash.substring(0, 16)}...</td>
+                              <td className="py-4 px-4 text-gray-600 text-sm">{new Date(entry.createdAt).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">
+                        <div className="text-sm text-gray-600">
+                          Showing <span className="font-semibold">{(ledgerPage - 1) * ledgerLimit + 1}</span> to <span className="font-semibold">{Math.min(ledgerPage * ledgerLimit, ledgerTotal)}</span> of <span className="font-semibold">{ledgerTotal}</span> entries
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button disabled={ledgerPage <= 1} onClick={() => { setLedgerPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">← Prev</button>
+                          <span className="px-4 py-2 bg-gray-50 rounded font-semibold text-gray-700">{ledgerPage} / {Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))}</span>
+                          <button disabled={ledgerPage > Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))} onClick={() => { setLedgerPage(p => p + 1); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">Next →</button>
+                          <select value={ledgerLimit} onChange={(e) => { setLedgerLimit(Number(e.target.value)); setLedgerPage(1); setLoading(true); fetchData(); }} className="border border-gray-300 rounded px-3 py-2 text-gray-700 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            {[25,50,100,200].map(n => <option key={n} value={n}>{n}/page</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
