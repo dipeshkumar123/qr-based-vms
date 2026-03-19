@@ -17,6 +17,11 @@ RUN pip install --no-cache-dir -r requirements-analytics.txt
 COPY analytics.py .
 COPY analytics_api.py .
 
+# Run as non-root user
+RUN groupadd -r appgroup && useradd -r -g appgroup -d /app appuser && \
+    chown -R appuser:appgroup /app
+USER appuser
+
 # Expose port
 EXPOSE 8001
 
@@ -25,4 +30,4 @@ HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
     CMD curl -f http://localhost:8001/health || exit 1
 
 # Run the application
-CMD ["python", "-m", "analytics_api"]
+CMD ["uvicorn", "analytics_api:app", "--host", "0.0.0.0", "--port", "8001"]

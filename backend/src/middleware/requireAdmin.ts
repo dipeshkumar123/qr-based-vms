@@ -1,40 +1,37 @@
 import { NextFunction, Request, Response } from "express";
 import { verifyAdminJwt } from "./adminJwt.js";
-
-const headerName = "x-admin-key";
-
-function extractProvidedKey(req: Request): string | null {
-  const headerKey = req.header(headerName);
-  if (headerKey) return headerKey.trim();
-  const authHeader = req.header("authorization");
-  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
-    return authHeader.slice(7).trim();
-  }
-  return null;
-}
+import { extractProvidedKey } from "./adminAuth.js";
+import { safeCompare } from "../utils/crypto.js";
+import { logger } from "../utils/logger.js";
+import { authConfig } from "../config.js";
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   // 1) Try JWT cookie first
-  const cookieToken = (req as any).cookies?.["admin_token"] || req.cookies?.["admin_token"]; // cookie-parser
+  const cookieToken = req.cookies?.["admin_token"];
   if (cookieToken) {
     const decoded = verifyAdminJwt(cookieToken);
     if (decoded) {
-      (req as any).admin = decoded;
+      req.admin = decoded;
       next();
       return;
     }
   }
 
   // 2) Fallback to legacy header key
-  const configuredKey = process.env.ADMIN_API_KEY;
+  const configuredKey = authConfig.adminApiKey;
   if (!configuredKey) {
+    logger.warn({ ip: req.ip, url: req.originalUrl }, "Admin auth failed: ADMIN_API_KEY not configured");
     res.status(401).json({ message: "Unauthorized" });
     return;
   }
   const provided = extractProvidedKey(req);
-  if (!provided || provided !== configuredKey) {
+  if (!provided || !safeCompare(provided, configuredKey)) {
+    logger.warn({ ip: req.ip, url: req.originalUrl }, "Admin auth failed: invalid API key");
     res.status(401).json({ message: "Unauthorized" });
     return;
   }
+
+  // Set admin context for API key auth too
+  req.admin = { role: "admin" };
   next();
 }

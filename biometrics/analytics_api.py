@@ -1,124 +1,178 @@
 """
-Analytics API endpoint for II-VMS
-Integrates with biometric service
+Analytics API for II-VMS
+========================
+FastAPI wrapper around the AnalyticsEngine.
+Uses a singleton engine with connection pooling.
+Sync handlers let FastAPI offload blocking I/O to a thread pool automatically.
 """
 
 import os
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
 import logging
-import sys
 
-# Add parent directory to path for analytics import
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
-from analytics import get_analytics_report
+from analytics import get_analytics_report, get_engine
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("analytics-api")
 
-app = FastAPI(title="II-VMS Analytics Service", version="1.0.0")
+# Service-to-service auth (optional, same key as backend)
+SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "")
+
+app = FastAPI(title="II-VMS Analytics Service", version="2.0.0")
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class AnalyticsRequest(BaseModel):
-    days: Optional[int] = 30
+def verify_key(x_service_key: Optional[str] = None):
+    """Verify service key if configured."""
+    if SERVICE_API_KEY and x_service_key != SERVICE_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing service key")
 
+
+# ── Health ──────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "analytics"}
+    return {"status": "healthy", "service": "analytics", "version": "2.0.0"}
 
+
+# ── Endpoints ───────────────────────────────────────────────────────
+# Using `def` (not `async def`) so FastAPI runs them in a thread pool,
+# preventing the synchronous pandas/psycopg2 calls from blocking the event loop.
 
 @app.get("/analytics")
-async def get_analytics(days: int = 30):
-    """
-    Get comprehensive analytics report
-    Query params:
-    - days: Number of days to analyze (default: 30)
-    """
+def get_analytics(
+    days: int = 30,
+    x_service_key: Optional[str] = Header(None),
+):
+    """Get comprehensive analytics report."""
+    verify_key(x_service_key)
     try:
         if days < 1 or days > 365:
-            raise ValueError("Days must be between 1 and 365")
-
-        report = get_analytics_report(days)
-        return report
+            raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+        return get_analytics_report(days)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Analytics generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Analytics generation failed: %s", e)
+        raise HTTPException(status_code=500, detail="Analytics generation failed")
 
 
 @app.get("/analytics/peak-hours")
-async def get_peak_hours(days: int = 30):
-    """Get peak hour predictions"""
+def get_peak_hours(
+    days: int = 30,
+    x_service_key: Optional[str] = Header(None),
+):
+    """Get peak hour predictions."""
+    verify_key(x_service_key)
     try:
-        from analytics import AnalyticsEngine
-
-        engine = AnalyticsEngine()
-        result = engine.predict_peak_hours(days)
-        return result
+        if days < 1 or days > 365:
+            raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+        engine = get_engine()
+        return engine.predict_peak_hours(days)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Peak hours failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Peak hours failed: %s", e)
+        raise HTTPException(status_code=500, detail="Peak hours analysis failed")
 
 
 @app.get("/analytics/frequent-visitors")
-async def get_frequent_visitors(limit: int = 10, min_visits: int = 2):
-    """Get frequent visitors"""
+def get_frequent_visitors(
+    limit: int = 10,
+    min_visits: int = 2,
+    x_service_key: Optional[str] = Header(None),
+):
+    """Get frequent visitors."""
+    verify_key(x_service_key)
     try:
-        from analytics import AnalyticsEngine
-
-        engine = AnalyticsEngine()
-        result = engine.get_frequent_visitors(limit, min_visits)
-        return {"visitors": result}
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+        if min_visits < 1:
+            raise HTTPException(status_code=400, detail="min_visits must be >= 1")
+        engine = get_engine()
+        return {"visitors": engine.get_frequent_visitors(limit, min_visits)}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Frequent visitors failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Frequent visitors failed: %s", e)
+        raise HTTPException(status_code=500, detail="Frequent visitors analysis failed")
 
 
 @app.get("/analytics/suspicious-activity")
-async def get_suspicious_activity(threshold: float = 0.05):
-    """Detect suspicious activity patterns"""
+def get_suspicious_activity(
+    threshold: float = 0.05,
+    x_service_key: Optional[str] = Header(None),
+):
+    """Detect suspicious activity patterns."""
+    verify_key(x_service_key)
     try:
         if threshold < 0.01 or threshold > 0.5:
-            raise ValueError("Threshold must be between 0.01 and 0.5")
-
-        from analytics import AnalyticsEngine
-
-        engine = AnalyticsEngine()
-        result = engine.detect_suspicious_activity(threshold)
-        return result
+            raise HTTPException(
+                status_code=400, detail="threshold must be between 0.01 and 0.5"
+            )
+        engine = get_engine()
+        return engine.detect_suspicious_activity(threshold)
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Suspicious activity detection failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Suspicious activity detection failed: %s", e)
+        raise HTTPException(status_code=500, detail="Suspicious activity analysis failed")
 
 
 @app.get("/analytics/trends")
-async def get_visitor_trends(days: int = 30):
-    """Get visitor count trends"""
+def get_visitor_trends(
+    days: int = 30,
+    x_service_key: Optional[str] = Header(None),
+):
+    """Get visitor count trends."""
+    verify_key(x_service_key)
     try:
-        from analytics import AnalyticsEngine
-
-        engine = AnalyticsEngine()
-        result = engine.get_visitor_trends(days)
-        return {"trends": result}
+        if days < 1 or days > 365:
+            raise HTTPException(status_code=400, detail="days must be between 1 and 365")
+        engine = get_engine()
+        return {"trends": engine.get_visitor_trends(days)}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Trends failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Trends failed: %s", e)
+        raise HTTPException(status_code=500, detail="Trends analysis failed")
+
+
+@app.get("/analytics/status-distribution")
+def get_status_distribution(x_service_key: Optional[str] = Header(None)):
+    """Get visitor count by status."""
+    verify_key(x_service_key)
+    try:
+        engine = get_engine()
+        return engine.get_status_distribution()
+    except Exception as e:
+        logger.error("Status distribution failed: %s", e)
+        raise HTTPException(status_code=500, detail="Status distribution failed")
 
 
 if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "analytics_api:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8001")),
+        log_level="info",
+    )if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("ANALYTICS_PORT", "8001"))

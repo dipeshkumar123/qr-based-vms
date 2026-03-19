@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import apiClient from '../lib/api';
+import apiClient, { getErrorMessage } from '../lib/api';
 
 export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
   const [capturedImage, setCapturedImage] = useState('');
@@ -12,6 +12,16 @@ export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
   const canvasRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
   const streamRef = useRef(null);
+
+  // Clean up camera stream on unmount to prevent media leak
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
 
   const startCamera = async () => {
     try {
@@ -67,14 +77,19 @@ export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
     setError('');
     setResult(null);
     try {
-      const response = await apiClient.post(`/api/biometrics/verify/${visitor.qrToken}`, {
-        capturedImage,
-        inputKind: 'base64',
-        threshold: 0.6
+      // Strip the data:image/...;base64, prefix for the API
+      const base64Data = capturedImage.includes(',')
+        ? capturedImage.split(',')[1]
+        : capturedImage;
+
+      const response = await apiClient.post('/api/biometric/verify', {
+        visitor_id: visitor.id,
+        photo_base64: base64Data,
+        match_threshold: 0.6,
       });
       setResult(response.data);
     } catch (err) {
-      setError(err.response?.data?.message || 'Verification failed');
+      setError(getErrorMessage(err, 'Verification failed'));
     } finally {
       setVerifying(false);
     }
@@ -124,13 +139,13 @@ export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               className={`mb-4 p-4 rounded-lg border-2 ${
-                result.matched
+                result.is_match
                   ? 'bg-green-50 border-green-500 text-green-800'
                   : 'bg-red-50 border-red-500 text-red-800'
               }`}
             >
               <div className="flex items-center gap-3 mb-2">
-                {result.matched ? (
+                {result.is_match ? (
                   <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
@@ -141,11 +156,13 @@ export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
                 )}
                 <div>
                   <div className="text-xl font-bold">
-                    {result.matched ? 'Face Matched ✓' : 'Face Not Matched ✗'}
+                    {result.is_match ? 'Face Matched ✓' : 'Face Not Matched ✗'}
                   </div>
-                  <div className="text-sm">Confidence: {(result.confidence * 100).toFixed(1)}%</div>
-                  {result.bestDistance !== null && result.bestDistance !== undefined && (
-                    <div className="text-sm">Distance: {result.bestDistance.toFixed(3)}</div>
+                  <div className="text-sm">
+                    Confidence: {((result.confidence_score ?? 0) * 100).toFixed(1)}%
+                  </div>
+                  {result.distance != null && (
+                    <div className="text-sm">Distance: {result.distance.toFixed(3)}</div>
                   )}
                 </div>
               </div>

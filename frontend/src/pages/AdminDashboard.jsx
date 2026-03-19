@@ -1,11 +1,112 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../store/authStore';
 import apiClient from '../lib/api';
 import Modal from '../components/Modal';
 import QRScanner from '../components/QRScanner';
 import BiometricVerification from '../components/BiometricVerification';
+
+/* ─── Toast notification component ─── */
+function Toast({ message, type, onClose }) {
+  const colors = {
+    success: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+    warning: 'bg-amber-50 border-amber-200 text-amber-800',
+    error:   'bg-red-50 border-red-200 text-red-800',
+  };
+  const icons = {
+    success: (
+      <svg className="w-5 h-5 text-emerald-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+    warning: (
+      <svg className="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      </svg>
+    ),
+    error: (
+      <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+    ),
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium shadow-sm ${colors[type] || colors.error}`}
+    >
+      {icons[type]}
+      <span className="flex-1">{message}</span>
+      <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </motion.div>
+  );
+}
+
+/* ─── Confirm dialog component ─── */
+function ConfirmDialog({ open, title, message, onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+          onClick={onCancel}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">{title}</h3>
+                <p className="text-sm text-gray-500">{message}</p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Cancel</button>
+              <button onClick={onConfirm} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-lg hover:bg-red-700 transition">Delete</button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ─── Stat card data ─── */
+const statCards = [
+  { key: 'total', label: 'Total Visitors', color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-50',
+    icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
+  },
+  { key: 'registered', label: 'Registered', color: 'from-amber-500 to-orange-600', bg: 'bg-amber-50',
+    icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  },
+  { key: 'checkedIn', label: 'Checked In', color: 'from-emerald-500 to-green-600', bg: 'bg-emerald-50',
+    icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  },
+  { key: 'checkedOut', label: 'Checked Out', color: 'from-slate-500 to-gray-600', bg: 'bg-gray-50',
+    icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" /></svg>
+  },
+];
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -14,6 +115,7 @@ export default function AdminDashboard() {
   const [visitorsTotal, setVisitorsTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
+  const [stats, setStats] = useState({ total: 0, registered: 0, checkedIn: 0, checkedOut: 0, todayTotal: 0, todayCheckedIn: 0 });
 
   const [ledger, setLedger] = useState([]);
   const [ledgerTotal, setLedgerTotal] = useState(0);
@@ -22,12 +124,15 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('visitors');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debounceRef = useRef(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scanMode, setScanMode] = useState('check-in'); // 'check-in' or 'check-out'
   const [scanMessage, setScanMessage] = useState({ type: '', text: '' });
   const [verificationMessage, setVerificationMessage] = useState({ type: '', text: '' });
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [selectedVisitor, setSelectedVisitor] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState({ open: false, id: null, name: '' });
 
   useEffect(() => {
     if (!isAdmin) {
@@ -37,23 +142,35 @@ export default function AdminDashboard() {
     fetchData();
   }, [isAdmin, navigate]);
 
+  // Debounce search input by 400ms
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchTerm]);
+
   useEffect(() => {
     if (!isAdmin) return;
     setLoading(true);
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, limit, searchTerm, ledgerPage, ledgerLimit]);
+  }, [page, limit, debouncedSearch, ledgerPage, ledgerLimit]);
 
   const fetchData = async () => {
     try {
-      const [visitorsRes, ledgerRes] = await Promise.all([
-        apiClient.get('/api/visitors', { params: { page, limit, query: searchTerm || undefined } }),
-        apiClient.get('/api/ledger', { params: { page: ledgerPage, limit: ledgerLimit } })
+      const [visitorsRes, ledgerRes, statsRes] = await Promise.all([
+        apiClient.get('/api/visitors', { params: { page, limit, query: debouncedSearch || undefined } }),
+        apiClient.get('/api/ledger', { params: { page: ledgerPage, limit: ledgerLimit } }),
+        apiClient.get('/api/visitors/stats')
       ]);
       setVisitors(visitorsRes.data.items || []);
       setVisitorsTotal(visitorsRes.data.total || 0);
       setLedger(ledgerRes.data.items || []);
       setLedgerTotal(ledgerRes.data.total || 0);
+      setStats(statsRes.data);
     } catch (error) {
       console.error('Failed to fetch data:', error);
       if (error.response?.status === 401) {
@@ -65,35 +182,43 @@ export default function AdminDashboard() {
     }
   };
 
+  const showToast = useCallback((type, text) => {
+    setScanMessage({ type, text });
+    setTimeout(() => setScanMessage({ type: '', text: '' }), 5000);
+  }, []);
+
   const handleCheckIn = async (token) => {
     try {
       await apiClient.post(`/api/visitors/${token}/check-in`);
-      fetchData(); // Refresh data
+      showToast('success', 'Visitor checked in successfully.');
+      fetchData();
     } catch (error) {
       console.error('Check-in failed:', error);
-      alert('Failed to check in visitor');
+      showToast('error', error.response?.data?.message || 'Failed to check in visitor.');
     }
   };
 
   const handleCheckOut = async (token) => {
     try {
       await apiClient.post(`/api/visitors/${token}/check-out`);
-      fetchData(); // Refresh data
+      showToast('success', 'Visitor checked out successfully.');
+      fetchData();
     } catch (error) {
       console.error('Check-out failed:', error);
-      alert('Failed to check out visitor');
+      showToast('error', error.response?.data?.message || 'Failed to check out visitor.');
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this visitor?')) return;
-    
     try {
       await apiClient.delete(`/api/visitors/${id}`);
-      fetchData(); // Refresh data
+      showToast('success', 'Visitor deleted.');
+      setConfirmDelete({ open: false, id: null, name: '' });
+      fetchData();
     } catch (error) {
       console.error('Delete failed:', error);
-      alert('Failed to delete visitor');
+      showToast('error', error.response?.data?.message || 'Failed to delete visitor.');
+      setConfirmDelete({ open: false, id: null, name: '' });
     }
   };
 
@@ -171,13 +296,6 @@ export default function AdminDashboard() {
 
   const filteredVisitors = visitors; // server-side filtering
 
-  const stats = {
-    total: visitorsTotal,
-    registered: visitors.filter(v => v.status === 'registered').length,
-    checkedIn: visitors.filter(v => v.status === 'checked_in').length,
-    checkedOut: visitors.filter(v => v.status === 'checked_out').length,
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen pt-32 flex items-center justify-center">
@@ -225,126 +343,68 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Scan Message */}
-          {scanMessage.text && (
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`mb-6 px-4 py-3 rounded-lg font-medium ${
-                scanMessage.type === 'success' 
-                  ? 'bg-green-50 border border-green-200 text-green-700'
-                  : scanMessage.type === 'warning'
-                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
-                  : 'bg-red-50 border border-red-200 text-red-700'
-              }`}
-            >
-              {scanMessage.text}
-            </motion.div>
-          )}
-
-          {/* Verification Message */}
-          {verificationMessage.text && (
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`mb-6 px-4 py-3 rounded-lg font-medium ${
-                verificationMessage.type === 'success' 
-                  ? 'bg-green-50 border border-green-200 text-green-700'
-                  : verificationMessage.type === 'warning'
-                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
-                  : 'bg-red-50 border border-red-200 text-red-700'
-              }`}
-            >
-              {verificationMessage.text}
-            </motion.div>
-          )}
+          {/* Scan / Verification Toasts */}
+          <AnimatePresence>
+            {scanMessage.text && (
+              <div className="mb-6">
+                <Toast message={scanMessage.text} type={scanMessage.type} onClose={() => setScanMessage({ type: '', text: '' })} />
+              </div>
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {verificationMessage.text && (
+              <div className="mb-6">
+                <Toast message={verificationMessage.text} type={verificationMessage.type} onClose={() => setVerificationMessage({ type: '', text: '' })} />
+              </div>
+            )}
+          </AnimatePresence>
 
           {/* Stats Cards */}
-          <div className="grid md:grid-cols-4 gap-6 mb-8">
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-white rounded-xl shadow-lg p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-500 text-sm">Total Visitors</p>
-                  <p className="text-3xl font-bold text-blue-600">{stats.total}</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {statCards.map((card) => (
+              <motion.div
+                key={card.key}
+                whileHover={{ y: -2 }}
+                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-gray-500">{card.label}</p>
+                  <div className={`w-10 h-10 ${card.bg} rounded-xl flex items-center justify-center`}>
+                    <div className={`bg-gradient-to-br ${card.color} bg-clip-text text-transparent`}>
+                      {card.icon}
+                    </div>
+                  </div>
                 </div>
-                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl">👥</span>
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-white rounded-xl shadow-lg p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-500 text-sm">Registered</p>
-                  <p className="text-3xl font-bold text-yellow-600">{stats.registered}</p>
-                </div>
-                <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl">⏳</span>
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-white rounded-xl shadow-lg p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-500 text-sm">Checked In</p>
-                  <p className="text-3xl font-bold text-green-600">{stats.checkedIn}</p>
-                </div>
-                <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl">✅</span>
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-white rounded-xl shadow-lg p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-500 text-sm">Checked Out</p>
-                  <p className="text-3xl font-bold text-gray-600">{stats.checkedOut}</p>
-                </div>
-                <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl">👋</span>
-                </div>
-              </div>
-            </motion.div>
+                <p className="text-3xl font-extrabold text-gray-900 stat-number">{stats[card.key]}</p>
+              </motion.div>
+            ))}
           </div>
 
           {/* Tabs */}
-          <div className="bg-white rounded-xl shadow-lg">
-            <div className="border-b border-gray-200">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="border-b border-gray-100">
               <div className="flex">
                 <button
                   onClick={() => setActiveTab('visitors')}
-                  className={`px-6 py-4 font-semibold transition ${
+                  className={`px-6 py-4 font-semibold text-sm transition relative ${
                     activeTab === 'visitors'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
+                      ? 'text-blue-600'
+                      : 'text-gray-400 hover:text-gray-600'
                   }`}
                 >
                   Visitors
+                  {activeTab === 'visitors' && <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
                 </button>
                 <button
                   onClick={() => setActiveTab('ledger')}
-                  className={`px-6 py-4 font-semibold transition ${
+                  className={`px-6 py-4 font-semibold text-sm transition relative ${
                     activeTab === 'ledger'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
+                      ? 'text-blue-600'
+                      : 'text-gray-400 hover:text-gray-600'
                   }`}
                 >
                   Audit Ledger
+                  {activeTab === 'ledger' && <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
                 </button>
               </div>
             </div>
@@ -359,18 +419,21 @@ export default function AdminDashboard() {
                     </p>
                   </div>
 
-                  <div className="mb-6 flex items-center gap-3">
-                    <input
-                      type="text"
-                      placeholder="Search by name, email, or phone..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    />
-                    <button
-                      onClick={() => { setPage(1); setLoading(true); fetchData(); }}
-                      className="px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold"
-                    >Search</button>
+                  <div className="mb-6">
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                        </svg>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search by name, email, or phone..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-gray-50 focus:bg-white"
+                      />
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -385,84 +448,80 @@ export default function AdminDashboard() {
                     ) : (
                       <table className="w-full">
                         <thead>
-                          <tr className="bg-gray-50 border-b border-gray-200">
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Name</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Email</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Phone</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Status</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Biometric</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Actions</th>
+                          <tr className="bg-gray-50/80">
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Name</th>
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Phone</th>
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Biometric</th>
+                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {filteredVisitors.map((visitor) => (
-                            <tr key={visitor.id} className="border-b border-gray-100 hover:bg-blue-50 transition">
-                              <td className="py-4 px-4 font-medium text-gray-900">{visitor.name}</td>
-                              <td className="py-4 px-4 text-gray-600 text-sm">{visitor.email}</td>
-                              <td className="py-4 px-4 text-gray-600 text-sm">{visitor.phone}</td>
-                              <td className="py-4 px-4">
+                            <tr key={visitor.id} className="border-b border-gray-50 hover:bg-blue-50/50 transition">
+                              <td className="py-3.5 px-4 font-medium text-gray-900">{visitor.name}</td>
+                              <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.email}</td>
+                              <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.phone}</td>
+                              <td className="py-3.5 px-4">
                                 <span
-                                  className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                  className={`badge ${
                                     visitor.status === 'checked_in'
-                                      ? 'bg-green-100 text-green-800'
+                                      ? 'badge-success'
                                       : visitor.status === 'checked_out'
-                                      ? 'bg-gray-100 text-gray-700'
-                                      : 'bg-yellow-100 text-yellow-800'
+                                      ? 'badge-neutral'
+                                      : 'badge-warning'
                                   }`}
                                 >
                                   {visitor.status === 'checked_in' 
-                                    ? '✓ In' 
+                                    ? 'Checked In' 
                                     : visitor.status === 'checked_out'
-                                    ? '✓ Out'
+                                    ? 'Checked Out'
                                     : 'Registered'}
                                 </span>
                               </td>
-                              <td className="py-4 px-4">
+                              <td className="py-3.5 px-4">
                                 {visitor.biometricEnrolled ? (
-                                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold">
-                                    ✓ Enrolled
-                                  </span>
+                                  <span className="badge badge-success">Enrolled</span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
-                                    ○ None
-                                  </span>
+                                  <span className="badge badge-neutral">None</span>
                                 )}
                               </td>
-                              <td className="py-4 px-4">
-                                <div className="flex gap-2 flex-wrap">
+                              <td className="py-3.5 px-4">
+                                <div className="flex gap-1.5 flex-wrap">
                                   <button
                                     onClick={() => openVerificationModal(visitor)}
                                     disabled={!visitor.biometricEnrolled}
-                                    className={`px-3 py-1 rounded text-xs font-semibold transition ${
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                                       visitor.biometricEnrolled
-                                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                                        : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                        ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     }`}
-                                    title={visitor.biometricEnrolled ? 'Verify face' : 'Visitor has not enrolled biometrics'}
+                                    title={visitor.biometricEnrolled ? 'Verify face' : 'Not enrolled'}
                                   >
                                     Verify
                                   </button>
                                   {visitor.status === 'registered' && (
                                     <button
                                       onClick={() => handleCheckIn(visitor.qrToken)}
-                                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs font-semibold"
+                                      className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-xs font-semibold transition"
                                     >
-                                      In
+                                      Check In
                                     </button>
                                   )}
                                   {visitor.status === 'checked_in' && (
                                     <button
                                       onClick={() => handleCheckOut(visitor.qrToken)}
-                                      className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-xs font-semibold"
+                                      className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 text-xs font-semibold transition"
                                     >
-                                      Out
+                                      Check Out
                                     </button>
                                   )}
                                   <button
-                                    onClick={() => handleDelete(visitor.id)}
-                                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs font-semibold"
+                                    onClick={() => setConfirmDelete({ open: true, id: visitor.id, name: visitor.name })}
+                                    className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-xs font-semibold transition"
                                   >
-                                    Del
+                                    Delete
                                   </button>
                                 </div>
                               </td>
@@ -475,14 +534,18 @@ export default function AdminDashboard() {
 
                   {/* Pagination */}
                   <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">
-                    <div className="text-sm text-gray-600">
-                      Showing <span className="font-semibold">{filteredVisitors.length === 0 ? 0 : (page - 1) * limit + 1}</span> to <span className="font-semibold">{Math.min(page * limit, visitorsTotal)}</span> of <span className="font-semibold">{visitorsTotal}</span> visitors
+                    <div className="text-sm text-gray-500">
+                      Showing <span className="font-semibold text-gray-700">{filteredVisitors.length === 0 ? 0 : (page - 1) * limit + 1}</span> to <span className="font-semibold text-gray-700">{Math.min(page * limit, visitorsTotal)}</span> of <span className="font-semibold text-gray-700">{visitorsTotal}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button disabled={page <= 1} onClick={() => { setPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">← Prev</button>
-                      <span className="px-4 py-2 bg-gray-50 rounded font-semibold text-gray-700">{page} / {Math.max(1, Math.ceil(visitorsTotal / limit))}</span>
-                      <button disabled={page >= Math.ceil(visitorsTotal / limit)} onClick={() => { setPage(p => p + 1); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">Next →</button>
-                      <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); setLoading(true); fetchData(); }} className="border border-gray-300 rounded px-3 py-2 text-gray-700 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                      <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                      </button>
+                      <span className="px-4 py-2 text-sm font-semibold text-gray-600">{page} / {Math.max(1, Math.ceil(visitorsTotal / limit))}</span>
+                      <button disabled={page >= Math.ceil(visitorsTotal / limit)} onClick={() => setPage(p => p + 1)} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                      </button>
+                      <select value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }} className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50">
                         {[10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}
                       </select>
                     </div>
@@ -521,14 +584,18 @@ export default function AdminDashboard() {
                         </tbody>
                       </table>
                       <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">
-                        <div className="text-sm text-gray-600">
-                          Showing <span className="font-semibold">{(ledgerPage - 1) * ledgerLimit + 1}</span> to <span className="font-semibold">{Math.min(ledgerPage * ledgerLimit, ledgerTotal)}</span> of <span className="font-semibold">{ledgerTotal}</span> entries
+                        <div className="text-sm text-gray-500">
+                          Showing <span className="font-semibold text-gray-700">{(ledgerPage - 1) * ledgerLimit + 1}</span> to <span className="font-semibold text-gray-700">{Math.min(ledgerPage * ledgerLimit, ledgerTotal)}</span> of <span className="font-semibold text-gray-700">{ledgerTotal}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button disabled={ledgerPage <= 1} onClick={() => { setLedgerPage(p => Math.max(1, p - 1)); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">← Prev</button>
-                          <span className="px-4 py-2 bg-gray-50 rounded font-semibold text-gray-700">{ledgerPage} / {Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))}</span>
-                          <button disabled={ledgerPage > Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))} onClick={() => { setLedgerPage(p => p + 1); setLoading(true); fetchData(); }} className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium">Next →</button>
-                          <select value={ledgerLimit} onChange={(e) => { setLedgerLimit(Number(e.target.value)); setLedgerPage(1); setLoading(true); fetchData(); }} className="border border-gray-300 rounded px-3 py-2 text-gray-700 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                          <button disabled={ledgerPage <= 1} onClick={() => setLedgerPage(p => Math.max(1, p - 1))} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                          </button>
+                          <span className="px-4 py-2 text-sm font-semibold text-gray-600">{ledgerPage} / {Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))}</span>
+                          <button disabled={ledgerPage > Math.max(1, Math.ceil(ledgerTotal / ledgerLimit))} onClick={() => setLedgerPage(p => p + 1)} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                          </button>
+                          <select value={ledgerLimit} onChange={(e) => { setLedgerLimit(Number(e.target.value)); setLedgerPage(1); }} className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-600 font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50">
                             {[25,50,100,200].map(n => <option key={n} value={n}>{n}/page</option>)}
                           </select>
                         </div>
@@ -569,6 +636,15 @@ export default function AdminDashboard() {
           />
         )}
       </Modal>
+
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        open={confirmDelete.open}
+        title="Delete Visitor"
+        message={`Are you sure you want to delete "${confirmDelete.name}"? This action cannot be undone.`}
+        onConfirm={() => handleDelete(confirmDelete.id)}
+        onCancel={() => setConfirmDelete({ open: false, id: null, name: '' })}
+      />
     </div>
   );
 }

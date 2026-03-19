@@ -1,19 +1,30 @@
 import { NextFunction, Request, Response } from "express";
-import jwt, { Secret, SignOptions } from "jsonwebtoken";
+import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
+import type { AdminPayload } from "../types/express.js";
+import { authConfig, serverConfig } from "../config.js";
 
 const COOKIE_NAME = "admin_token";
 
-export function signAdminJwt(payload: object, expiresIn: string | number = "2h"): string {
-  const secret: Secret | undefined = process.env.ADMIN_JWT_SECRET as unknown as Secret;
-  if (!secret) throw new Error("ADMIN_JWT_SECRET not set");
-  return jwt.sign(payload as any, secret, { expiresIn } as SignOptions);
+export function signAdminJwt(payload: object, expiresIn?: string | number): string {
+  if (!authConfig.jwtSecret) throw new Error("ADMIN_JWT_SECRET not set");
+  const secret: Secret = authConfig.jwtSecret;
+  const options: SignOptions = {
+    expiresIn: (expiresIn || authConfig.jwtExpiresIn) as SignOptions["expiresIn"],
+    algorithm: authConfig.jwtAlgorithm,
+    issuer: authConfig.jwtIssuer,
+    audience: authConfig.jwtAudience,
+  };
+  return jwt.sign(payload, secret, options);
 }
 
-export function verifyAdminJwt(token: string): any | null {
-  const secret: Secret | undefined = process.env.ADMIN_JWT_SECRET as unknown as Secret;
-  if (!secret) return null;
+export function verifyAdminJwt(token: string): AdminPayload | null {
+  if (!authConfig.jwtSecret) return null;
   try {
-    return jwt.verify(token, secret);
+    return jwt.verify(token, authConfig.jwtSecret, {
+      algorithms: [authConfig.jwtAlgorithm],
+      issuer: authConfig.jwtIssuer,
+      audience: authConfig.jwtAudience,
+    }) as AdminPayload;
   } catch {
     return null;
   }
@@ -30,27 +41,25 @@ export function requireAdminJwt(req: Request, res: Response, next: NextFunction)
     res.status(401).json({ message: "Unauthorized" });
     return;
   }
-  (req as any).admin = decoded;
+  req.admin = decoded;
   next();
 }
 
 export function setAdminCookie(res: Response, token: string): void {
-  const isProd = (process.env.NODE_ENV || "").toLowerCase() === "production";
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: isProd ? "none" : "lax",
-    secure: isProd,
+    sameSite: serverConfig.isProd ? "none" : "lax",
+    secure: serverConfig.isProd,
     maxAge: 1000 * 60 * 60 * 2,
     path: "/",
   });
 }
 
 export function clearAdminCookie(res: Response): void {
-  const isProd = (process.env.NODE_ENV || "").toLowerCase() === "production";
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    sameSite: isProd ? "none" : "lax",
-    secure: isProd,
+    sameSite: serverConfig.isProd ? "none" : "lax",
+    secure: serverConfig.isProd,
     path: "/",
   });
 }

@@ -1,83 +1,153 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import apiClient, { uploadImageFile } from '../lib/api';
+import apiClient, { getErrorMessage } from '../lib/api';
 
+/**
+ * ManagePhotosModal — lets admins view biometric enrollment status,
+ * capture a new face encoding, or delete stored biometric data for a visitor.
+ *
+ * Works with the deployed biometric service via the backend proxy:
+ *   GET  /api/biometric/info/:visitor_id
+ *   POST /api/biometric/capture     { visitor_id, photo_base64 }
+ *   DELETE /api/biometric/encoding/:visitor_id
+ */
 export default function ManagePhotosModal({ isOpen, onClose, visitor }) {
-  const [photos, setPhotos] = useState([]);
+  const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState('');
-  const [newPhotoUrl, setNewPhotoUrl] = useState('');
+  const [success, setSuccess] = useState('');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [capturedImage, setCapturedImage] = useState('');
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Fetch enrollment info whenever modal opens
   useEffect(() => {
     if (isOpen && visitor) {
-      fetchPhotos();
+      fetchEnrollmentInfo();
     }
+    return () => stopCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, visitor]);
 
-  const fetchPhotos = async () => {
+  const fetchEnrollmentInfo = async () => {
     if (!visitor) return;
     setLoading(true);
     setError('');
     try {
-      const response = await apiClient.get(`/api/biometrics/photos/${visitor.qrToken}`);
-      setPhotos(response.data.photos || []);
+      const response = await apiClient.get(`/api/biometric/info/${visitor.id}`);
+      setInfo(response.data);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load photos');
+      // 404 means no encoding stored yet — that's not an error
+      if (err.response?.status === 404) {
+        setInfo({ has_encoding: false });
+      } else {
+        setError(getErrorMessage(err, 'Failed to load biometric info'));
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddUrl = async () => {
-    if (!newPhotoUrl.trim()) {
-      setError('Please enter a valid URL');
-      return;
-    }
-    setUploading(true);
-    setError('');
+  // ── Camera helpers ──────────────────────────────────
+  const startCamera = async () => {
     try {
-      await apiClient.post(`/api/biometrics/photos/${visitor.qrToken}`, { url: newPhotoUrl });
-      setNewPhotoUrl('');
-      await fetchPhotos();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to add photo');
-    } finally {
-      setUploading(false);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        setCameraActive(true);
+      }
+    } catch {
+      setError('Failed to access camera. Please allow camera permissions.');
     }
   };
 
-  const handleFileUpload = async (e) => {
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setCameraActive(false);
+    }
+  };
+
+  const captureFromCamera = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    setCapturedImage(canvas.toDataURL('image/jpeg', 0.9));
+    stopCamera();
+  };
+
+  const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploading(true);
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Image must be under 10 MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (evt) => setCapturedImage(evt.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  // ── Capture encoding ────────────────────────────────
+  const handleCaptureEncoding = async () => {
+    if (!capturedImage) {
+      setError('Please capture or upload an image first');
+      return;
+    }
+    setCapturing(true);
     setError('');
+    setSuccess('');
     try {
-      const url = await uploadImageFile(file);
-      await apiClient.post(`/api/biometrics/photos/${visitor.qrToken}`, { url });
-      await fetchPhotos();
+      const base64Data = capturedImage.includes(',')
+        ? capturedImage.split(',')[1]
+        : capturedImage;
+
+      await apiClient.post('/api/biometric/capture', {
+        visitor_id: visitor.id,
+        photo_base64: base64Data,
+      });
+      setSuccess('Face encoding captured successfully!');
+      setCapturedImage('');
+      await fetchEnrollmentInfo();
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to upload photo');
+      setError(getErrorMessage(err, 'Failed to capture face encoding'));
     } finally {
-      setUploading(false);
+      setCapturing(false);
     }
   };
 
-  const handleDelete = async (photoId) => {
-    if (!window.confirm('Are you sure you want to delete this photo?')) return;
+  // ── Delete encoding ─────────────────────────────────
+  const handleDeleteEncoding = async () => {
+    if (!window.confirm('Delete all biometric data for this visitor? This cannot be undone.')) return;
     setError('');
+    setSuccess('');
     try {
-      await apiClient.delete(`/api/biometrics/photos/${photoId}`);
-      await fetchPhotos();
+      await apiClient.delete(`/api/biometric/encoding/${visitor.id}`);
+      setSuccess('Biometric data deleted.');
+      setInfo({ has_encoding: false });
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to delete photo');
+      setError(getErrorMessage(err, 'Failed to delete biometric data'));
     }
   };
 
   const handleClose = () => {
-    setNewPhotoUrl('');
+    stopCamera();
+    setCapturedImage('');
     setError('');
+    setSuccess('');
+    setInfo(null);
     onClose();
   };
 
@@ -88,12 +158,13 @@ export default function ManagePhotosModal({ isOpen, onClose, visitor }) {
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
       >
         <div className="p-6">
+          {/* Header */}
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h2 className="text-2xl font-bold">Manage Reference Photos</h2>
+              <h2 className="text-2xl font-bold">Manage Biometric Data</h2>
               <p className="text-gray-600 text-sm">
                 {visitor?.name} ({visitor?.email})
               </p>
@@ -105,102 +176,150 @@ export default function ManagePhotosModal({ isOpen, onClose, visitor }) {
             </button>
           </div>
 
+          {/* Alerts */}
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               {error}
             </div>
           )}
-
-          {/* Add Photo Section */}
-          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-            <h3 className="font-semibold mb-3">Add New Reference Photo</h3>
-            <div className="space-y-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newPhotoUrl}
-                  onChange={(e) => setNewPhotoUrl(e.target.value)}
-                  placeholder="Enter photo URL (http://... or data:image/...)"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
-                <button
-                  onClick={handleAddUrl}
-                  disabled={uploading || !newPhotoUrl.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50"
-                >
-                  {uploading ? 'Adding...' : 'Add URL'}
-                </button>
-              </div>
-              <div className="text-center">
-                <span className="text-gray-500 text-sm">or</span>
-              </div>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg font-semibold hover:bg-gray-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                {uploading ? 'Uploading...' : 'Upload from Device'}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
+          {success && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+              {success}
             </div>
-          </div>
+          )}
 
-          {/* Photos Grid */}
-          <div>
-            <h3 className="font-semibold mb-3">Stored Photos ({photos.length})</h3>
-            {loading ? (
-              <div className="text-center py-8">
-                <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                <p className="text-gray-600 mt-2">Loading photos...</p>
-              </div>
-            ) : photos.length === 0 ? (
-              <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
-                <svg className="w-16 h-16 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <p className="text-gray-600">No reference photos yet</p>
-                <p className="text-gray-500 text-sm">Add photos to enable face verification</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {photos.map((photo) => (
-                  <div key={photo.id} className="relative group">
-                    <img
-                      src={photo.url}
-                      alt="Reference"
-                      className="w-full h-48 object-cover rounded-lg border-2 border-gray-200"
-                      onError={(e) => {
-                        e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%23999"%3EError%3C/text%3E%3C/svg%3E';
-                      }}
-                    />
+          {/* Enrollment Status */}
+          {loading ? (
+            <div className="text-center py-8">
+              <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-gray-600 mt-2">Loading biometric info…</p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h3 className="font-semibold mb-2">Enrollment Status</h3>
+                {info?.has_encoding ? (
+                  <div className="space-y-1 text-sm">
+                    <p className="flex items-center gap-2">
+                      <span className="inline-block w-3 h-3 rounded-full bg-green-500" />
+                      <span className="font-medium text-green-700">Face encoding enrolled</span>
+                    </p>
+                    {info.encoded_at && (
+                      <p className="text-gray-500">
+                        Encoded: {new Date(info.encoded_at).toLocaleString()}
+                      </p>
+                    )}
+                    {info.photo_count != null && (
+                      <p className="text-gray-500">Photos on file: {info.photo_count}</p>
+                    )}
                     <button
-                      onClick={() => handleDelete(photo.id)}
-                      className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-red-600"
-                      title="Delete photo"
+                      onClick={handleDeleteEncoding}
+                      className="mt-2 px-3 py-1.5 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
+                      Delete Biometric Data
                     </button>
-                    <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-60 text-white text-xs p-1 rounded opacity-0 group-hover:opacity-100 transition">
-                      {new Date(photo.createdAt).toLocaleDateString()}
+                  </div>
+                ) : (
+                  <p className="flex items-center gap-2 text-sm">
+                    <span className="inline-block w-3 h-3 rounded-full bg-gray-400" />
+                    <span className="text-gray-600">No face encoding stored yet</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Capture Section */}
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h3 className="font-semibold mb-3">
+                  {info?.has_encoding ? 'Update Face Encoding' : 'Enroll Face Encoding'}
+                </h3>
+
+                {!capturedImage && !cameraActive && (
+                  <div className="flex gap-3">
+                    <button
+                      onClick={startCamera}
+                      className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      Use Camera
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 px-4 py-3 bg-gray-600 text-white rounded-lg font-semibold hover:bg-gray-700 transition flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Upload Image
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </div>
+                )}
+
+                {cameraActive && (
+                  <div className="space-y-3">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full rounded-lg border-2 border-blue-500"
+                    />
+                    <canvas ref={canvasRef} className="hidden" />
+                    <div className="flex gap-3">
+                      <button
+                        onClick={captureFromCamera}
+                        className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition"
+                      >
+                        Capture Photo
+                      </button>
+                      <button
+                        onClick={stopCamera}
+                        className="px-4 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400 transition"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                )}
 
-          <div className="mt-6 pt-4 border-t border-gray-200">
+                {capturedImage && (
+                  <div className="space-y-3">
+                    <img
+                      src={capturedImage}
+                      alt="Captured face"
+                      className="w-full max-h-64 object-contain rounded-lg border-2 border-gray-300"
+                    />
+                    <div className="flex gap-3">
+                      <button
+                        onClick={handleCaptureEncoding}
+                        disabled={capturing}
+                        className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transition disabled:opacity-50"
+                      >
+                        {capturing ? 'Processing…' : 'Save Face Encoding'}
+                      </button>
+                      <button
+                        onClick={() => setCapturedImage('')}
+                        className="px-4 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400 transition"
+                      >
+                        Retake
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Footer */}
+          <div className="pt-4 border-t border-gray-200">
             <button
               onClick={handleClose}
               className="w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition"

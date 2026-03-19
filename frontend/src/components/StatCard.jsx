@@ -1,30 +1,35 @@
 import { motion } from 'framer-motion';
 
-export default function StatCard({ icon, label, value, color = 'blue' }) {
-  const colorClasses = {
-    blue: 'text-blue-600 bg-blue-100',
-    green: 'text-green-600 bg-green-100',
-    yellow: 'text-yellow-600 bg-yellow-100',
-    red: 'text-red-600 bg-red-100',
-    purple: 'text-purple-600 bg-purple-100',
-  };
+const gradients = {
+  blue:   'from-blue-500 to-indigo-600',
+  green:  'from-emerald-500 to-green-600',
+  yellow: 'from-amber-500 to-orange-600',
+  red:    'from-rose-500 to-red-600',
+  purple: 'from-violet-500 to-purple-600',
+};
 
+const bgs = {
+  blue:   'bg-blue-50',
+  green:  'bg-emerald-50',
+  yellow: 'bg-amber-50',
+  red:    'bg-rose-50',
+  purple: 'bg-violet-50',
+};
+
+export default function StatCard({ icon, label, value, color = 'blue', subtitle }) {
   return (
     <motion.div
-      whileHover={{ scale: 1.02 }}
-      className="bg-white rounded-xl shadow-lg p-6"
+      whileHover={{ y: -2 }}
+      className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
     >
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-gray-500 text-sm mb-1">{label}</p>
-          <p className={`text-3xl font-bold ${colorClasses[color]?.split(' ')[0] || 'text-blue-600'}`}>
-            {value}
-          </p>
-        </div>
-        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${colorClasses[color] || colorClasses.blue}`}>
-          <span className="text-2xl">{icon}</span>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <div className={`w-10 h-10 ${bgs[color] || bgs.blue} rounded-xl flex items-center justify-center`}>
+          <span className="text-lg">{icon}</span>
         </div>
       </div>
+      <p className="text-3xl font-extrabold text-gray-900 stat-number">{value}</p>
+      {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
     </motion.div>
   );
 }

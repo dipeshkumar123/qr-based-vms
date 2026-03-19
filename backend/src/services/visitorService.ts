@@ -4,8 +4,14 @@ import { CreateVisitorPayload, Visitor } from "../types/visitor.js";
 import { v4 as uuidv4 } from "uuid";
 import { HttpError } from "../utils/httpError.js";
 import { notifyVisitorArrival } from "./notificationService.js";
+import { logger } from "../utils/logger.js";
 
-type LedgerEvent = "created" | "checked_in" | "checked_out" | "deleted";
+type LedgerEvent = "created" | "checked_in" | "checked_out" | "deleted" | "updated";
+
+// Shared column list to avoid repetition
+const VISITOR_COLUMNS = `id, name, email, phone, purpose, status, qr_token as "qrToken", 
+            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
+            created_at as "createdAt", updated_at as "updatedAt"`;
 
 export interface LedgerEntry {
   hash: string;
@@ -17,28 +23,97 @@ export async function createVisitor(payload: CreateVisitorPayload): Promise<Visi
   const qrToken = uuidv4();
   const status: Visitor["status"] = "registered";
 
+  // Use a transaction to ensure visitor + ledger entry are atomic
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `INSERT INTO visitors (name, email, phone, purpose, status, qr_token)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING ${VISITOR_COLUMNS}`,
+      [payload.name, payload.email, payload.phone, payload.purpose, status, qrToken]
+    );
+
+    const visitor = result.rows[0] as Visitor;
+
+    // Record ledger entry within the same transaction
+    await recordLedgerEntryWithClient(client, visitor, "created");
+
+    await client.query("COMMIT");
+
+    // Send notification about new visitor registration (fire-and-forget after commit)
+    notifyVisitorArrival({
+      name: visitor.name,
+      email: visitor.email,
+      phone: visitor.phone,
+      purpose: visitor.purpose,
+    }).catch((error) => {
+      logger.error({ err: error }, "Failed to send arrival notification");
+    });
+
+    return visitor;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function findVisitorById(id: number): Promise<Visitor | null> {
   const result = await pool.query(
-    `INSERT INTO visitors (name, email, phone, purpose, status, qr_token)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, name, email, phone, purpose, status, qr_token as "qrToken", 
-               checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
-               created_at as "createdAt", updated_at as "updatedAt"`,
-    [payload.name, payload.email, payload.phone, payload.purpose, status, qrToken]
+    `SELECT ${VISITOR_COLUMNS} FROM visitors WHERE id = $1`,
+    [id]
+  );
+  return (result.rows[0] as Visitor) ?? null;
+}
+
+export interface UpdateVisitorPayload {
+  name?: string;
+  email?: string;
+  phone?: string;
+  purpose?: string;
+}
+
+export async function updateVisitor(id: number, payload: UpdateVisitorPayload): Promise<Visitor | null> {
+  const setClauses: string[] = [];
+  const params: any[] = [];
+
+  if (payload.name !== undefined) {
+    params.push(payload.name);
+    setClauses.push(`name = $${params.length}`);
+  }
+  if (payload.email !== undefined) {
+    params.push(payload.email);
+    setClauses.push(`email = $${params.length}`);
+  }
+  if (payload.phone !== undefined) {
+    params.push(payload.phone);
+    setClauses.push(`phone = $${params.length}`);
+  }
+  if (payload.purpose !== undefined) {
+    params.push(payload.purpose);
+    setClauses.push(`purpose = $${params.length}`);
+  }
+
+  if (setClauses.length === 0) {
+    return findVisitorById(id);
+  }
+
+  setClauses.push("updated_at = NOW()");
+  params.push(id);
+
+  const result = await pool.query(
+    `UPDATE visitors SET ${setClauses.join(", ")} WHERE id = $${params.length}
+     RETURNING ${VISITOR_COLUMNS}`,
+    params
   );
 
-  const visitor = result.rows[0] as Visitor;
-  await recordLedgerEntry(visitor, "created");
-  
-  // Send notification about new visitor registration
-  notifyVisitorArrival({
-    name: visitor.name,
-    email: visitor.email,
-    phone: visitor.phone,
-    purpose: visitor.purpose,
-  }).catch((error) => {
-    console.error('Failed to send arrival notification:', error);
-  });
-
+  const visitor = (result.rows[0] as Visitor) ?? null;
+  if (visitor) {
+    await recordLedgerEntry(visitor, "updated");
+  }
   return visitor;
 }
 
@@ -79,11 +154,11 @@ export async function listVisitors(options: ListVisitorsOptions = {}): Promise<{
      FROM visitors
      ${whereSql}
      ORDER BY created_at DESC
-     LIMIT ${limit} OFFSET ${offset}`;
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
   const [countResult, listResult] = await Promise.all([
     pool.query(countSql, params),
-    pool.query(listSql, params),
+    pool.query(listSql, [...params, limit, offset]),
   ]);
 
   return { items: listResult.rows as Visitor[], total: countResult.rows[0].total as number, page, limit };
@@ -91,12 +166,9 @@ export async function listVisitors(options: ListVisitorsOptions = {}): Promise<{
 
 export async function findVisitorByQrToken(qrToken: string): Promise<Visitor | null> {
   const result = await pool.query(
-    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
-            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
-            created_at as "createdAt", updated_at as "updatedAt"
-     FROM visitors
-     WHERE qr_token = $1`
-  , [qrToken]);
+    `SELECT ${VISITOR_COLUMNS} FROM visitors WHERE qr_token = $1`,
+    [qrToken]
+  );
 
   return (result.rows[0] as Visitor) ?? null;
 }
@@ -188,28 +260,24 @@ export async function checkOutVisitor(qrToken: string): Promise<Visitor | null> 
   return visitor;
 }
 
-export async function deleteVisitor(id: number): Promise<void> {
+export async function deleteVisitor(id: number): Promise<boolean> {
   const visitorResult = await pool.query<Visitor>(
-    `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
-            checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
-            created_at as "createdAt", updated_at as "updatedAt"
-     FROM visitors
-     WHERE id = $1`,
+    `SELECT ${VISITOR_COLUMNS} FROM visitors WHERE id = $1`,
     [id]
   );
 
   const visitor = visitorResult.rows[0];
   if (!visitor) {
-    return;
+    return false;
   }
 
   await recordLedgerEntry(visitor, "deleted");
 
   await pool.query(
-    `DELETE FROM visitors
-     WHERE id = $1`,
+    `DELETE FROM visitors WHERE id = $1`,
     [id]
   );
+  return true;
 }
 
 export async function getLedger(page = 1, limit = 100): Promise<{ items: LedgerEntry[]; total: number; page: number; limit: number }> {
@@ -221,7 +289,8 @@ export async function getLedger(page = 1, limit = 100): Promise<{ items: LedgerE
       `SELECT visitor_id as "visitorId", hash, created_at as "createdAt"
        FROM audit_ledger
        ORDER BY created_at DESC
-       LIMIT ${safeLimit} OFFSET ${offset}`
+       LIMIT $1 OFFSET $2`,
+      [safeLimit, offset]
     ),
   ]);
   return { items: list.rows as LedgerEntry[], total: count.rows[0].total as number, page: Math.max(1, page), limit: safeLimit };
@@ -229,32 +298,27 @@ export async function getLedger(page = 1, limit = 100): Promise<{ items: LedgerE
 
 export async function verifyLedgerLinks(): Promise<{ ok: boolean; issues: Array<{ visitorId: number; index: number; message: string }> }> {
   // Verify that for each visitor, prev_hash chains to previous hash
-  // Note: we cannot recompute the hash content, only verify link consistency
+  // Use a window function to detect mismatches directly in SQL to avoid loading
+  // millions of rows into Node.js memory
   try {
     const res = await pool.query(
-      `SELECT visitor_id, hash, COALESCE(prev_hash,'') as prev_hash, created_at
-       FROM audit_ledger
-       ORDER BY visitor_id ASC, created_at ASC, id ASC`
+      `SELECT visitor_id, idx, prev_hash, expected_prev
+       FROM (
+         SELECT 
+           visitor_id,
+           ROW_NUMBER() OVER (PARTITION BY visitor_id ORDER BY created_at, id) - 1 AS idx,
+           COALESCE(prev_hash, '') AS prev_hash,
+           COALESCE(LAG(hash) OVER (PARTITION BY visitor_id ORDER BY created_at, id), '') AS expected_prev
+         FROM audit_ledger
+       ) sub
+       WHERE prev_hash != expected_prev
+       LIMIT 500`
     );
-    const issues: Array<{ visitorId: number; index: number; message: string }> = [];
-    let currentVisitor: number | null = null;
-    let lastHash: string | null = null;
-    let idx = -1;
-    for (const row of res.rows) {
-      const vId = row.visitor_id as number;
-      if (currentVisitor !== vId) {
-        currentVisitor = vId;
-        lastHash = null;
-        idx = 0;
-      } else {
-        idx += 1;
-      }
-      const prev = row.prev_hash as string;
-      if ((lastHash ?? "") !== (prev ?? "")) {
-        issues.push({ visitorId: vId, index: idx, message: "prev_hash does not match previous hash" });
-      }
-      lastHash = row.hash as string;
-    }
+    const issues = res.rows.map((row: any) => ({
+      visitorId: row.visitor_id as number,
+      index: Number(row.idx),
+      message: "prev_hash does not match previous hash",
+    }));
     return { ok: issues.length === 0, issues };
   } catch (e) {
     return { ok: false, issues: [{ visitorId: -1, index: -1, message: (e as any)?.message || "verification failed" }] };
@@ -279,18 +343,20 @@ export async function generateAuditReport(): Promise<AuditReport> {
     const chainIntegrity = await verifyLedgerLinks();
 
     // Get suspicious visitors (those with broken chains)
+    // Use a subquery since window functions (LAG) cannot appear in HAVING clauses
     const suspiciousRes = await pool.query(`
-      SELECT 
-        al.visitor_id,
-        COUNT(*)::int as entry_count,
-        SUM(CASE WHEN COALESCE(al.prev_hash,'') != COALESCE(
-          LAG(al.hash) OVER (PARTITION BY al.visitor_id ORDER BY al.created_at)
-        , '') THEN 1 ELSE 0 END)::int as tampered_count
-      FROM audit_ledger al
-      GROUP BY al.visitor_id
-      HAVING SUM(CASE WHEN COALESCE(al.prev_hash,'') != COALESCE(
-        LAG(al.hash) OVER (PARTITION BY al.visitor_id ORDER BY al.created_at)
-      , '') THEN 1 ELSE 0 END) > 0
+      SELECT visitor_id, entry_count, tampered_count
+      FROM (
+        SELECT 
+          al.visitor_id,
+          COUNT(*)::int as entry_count,
+          SUM(CASE WHEN COALESCE(al.prev_hash,'') != COALESCE(
+            LAG(al.hash) OVER (PARTITION BY al.visitor_id ORDER BY al.created_at)
+          , '') THEN 1 ELSE 0 END)::int as tampered_count
+        FROM audit_ledger al
+        GROUP BY al.visitor_id
+      ) sub
+      WHERE tampered_count > 0
     `);
 
     const visitorsSuspicious = suspiciousRes.rows.map(row => ({
@@ -317,7 +383,77 @@ export async function generateAuditReport(): Promise<AuditReport> {
   }
 }
 
-async function recordLedgerEntry(visitor: Visitor, event: LedgerEvent): Promise<void> {
+export async function getVisitorStats(): Promise<{
+  total: number;
+  registered: number;
+  checkedIn: number;
+  checkedOut: number;
+  todayTotal: number;
+  todayCheckedIn: number;
+}> {
+  const result = await pool.query(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE status = 'registered')::int AS registered,
+      COUNT(*) FILTER (WHERE status = 'checked_in')::int AS "checkedIn",
+      COUNT(*) FILTER (WHERE status = 'checked_out')::int AS "checkedOut",
+      COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int AS "todayTotal",
+      COUNT(*) FILTER (WHERE status = 'checked_in' AND checked_in_at >= CURRENT_DATE)::int AS "todayCheckedIn"
+    FROM visitors
+  `);
+  return result.rows[0];
+}
+
+export async function exportVisitorsCsv(status?: string): Promise<string> {
+  const params: any[] = [];
+  let whereSql = "";
+  if (status && status !== "all") {
+    params.push(status);
+    whereSql = `WHERE status = $1`;
+  }
+
+  const result = await pool.query(
+    `SELECT id, name, email, phone, purpose, status,
+            checked_in_at, checked_out_at, created_at
+     FROM visitors ${whereSql}
+     ORDER BY created_at DESC`,
+    params
+  );
+
+  const header = "ID,Name,Email,Phone,Purpose,Status,Checked In,Checked Out,Registered At";
+  const rows = result.rows.map((r: any) => {
+    // Escape for CSV: wrap in quotes & double-escape internal quotes
+    // Also prefix formulas with single-quote to prevent CSV injection in spreadsheet apps
+    const escape = (val: string) => {
+      const safe = (val ?? "").replace(/"/g, '""');
+      // Prevent CSV injection: prefix formula-start chars with a single quote
+      const sanitized = /^[=+\-@\t\r]/.test(safe) ? `'${safe}` : safe;
+      return `"${sanitized}"`;
+    };
+    return [
+      r.id,
+      escape(r.name),
+      escape(r.email),
+      escape(r.phone),
+      escape(r.purpose),
+      r.status,
+      r.checked_in_at ? new Date(r.checked_in_at).toISOString() : "",
+      r.checked_out_at ? new Date(r.checked_out_at).toISOString() : "",
+      new Date(r.created_at).toISOString(),
+    ].join(",");
+  });
+
+  return [header, ...rows].join("\n");
+}
+
+/**
+ * Core ledger recording logic that accepts a queryable (pool or transaction client).
+ */
+async function recordLedgerEntryImpl(
+  queryable: { query: (sql: string, params: any[]) => Promise<any> },
+  visitor: Visitor,
+  event: LedgerEvent
+): Promise<void> {
   const payload = JSON.stringify({
     id: visitor.id,
     status: visitor.status,
@@ -329,7 +465,7 @@ async function recordLedgerEntry(visitor: Visitor, event: LedgerEvent): Promise<
   // Fetch previous hash (last inserted) to build chain for tamper resistance
   let prevHash: string | null = null;
   try {
-    const prevResult = await pool.query(
+    const prevResult = await queryable.query(
       `SELECT hash FROM audit_ledger WHERE visitor_id = $1 ORDER BY created_at DESC LIMIT 1`,
       [visitor.id]
     );
@@ -343,16 +479,30 @@ async function recordLedgerEntry(visitor: Visitor, event: LedgerEvent): Promise<
 
   // Attempt to insert with prev_hash column first; fallback if column missing
   try {
-    await pool.query(
+    await queryable.query(
       `INSERT INTO audit_ledger (visitor_id, hash, prev_hash)
        VALUES ($1, $2, $3)`,
       [visitor.id, hash, prevHash]
     );
   } catch {
-    await pool.query(
+    await queryable.query(
       `INSERT INTO audit_ledger (visitor_id, hash)
        VALUES ($1, $2)`,
       [visitor.id, hash]
     );
   }
+}
+
+/** Record a ledger entry using the shared pool */
+async function recordLedgerEntry(visitor: Visitor, event: LedgerEvent): Promise<void> {
+  return recordLedgerEntryImpl(pool, visitor, event);
+}
+
+/** Record a ledger entry using a specific transaction client */
+async function recordLedgerEntryWithClient(
+  client: { query: (sql: string, params: any[]) => Promise<any> },
+  visitor: Visitor,
+  event: LedgerEvent
+): Promise<void> {
+  return recordLedgerEntryImpl(client, visitor, event);
 }

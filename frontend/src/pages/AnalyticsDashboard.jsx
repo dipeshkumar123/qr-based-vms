@@ -23,9 +23,12 @@ const AnalyticsDashboard = () => {
   const [frequentVisitors, setFrequentVisitors] = useState(null);
   const [suspiciousActivity, setSuspiciousActivity] = useState(null);
   const [trends, setTrends] = useState(null);
+  const [statusDistribution, setStatusDistribution] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [partialErrors, setPartialErrors] = useState([]);
   const [days, setDays] = useState(30);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     fetchAnalytics();
@@ -35,27 +38,46 @@ const AnalyticsDashboard = () => {
     try {
       setLoading(true);
       setError(null);
+      setPartialErrors([]);
 
-      const [reportRes, peakRes, frequentRes, suspiciousRes, trendsRes] = await Promise.all([
-        api.get(`/api/analytics/report?days=${days}`).catch(e => ({ data: { summary: {} } })),
-        api.get(`/api/analytics/peak-hours?days=${days}`).catch(e => ({ data: { forecast: {}, peak_hours: [], error: null } })),
-        api.get(`/api/analytics/frequent-visitors?limit=10`).catch(e => ({ data: { visitors: [] } })),
-        api.get(`/api/analytics/suspicious-activity?threshold=0.05`).catch(e => ({ data: { suspicious_visitors: [] } })),
-        api.get(`/api/analytics/trends?days=${days}`).catch(e => ({ data: { trends: [] } })),
-      ]);
+      const errors = [];
 
-      // Safely extract data with fallbacks
-      const analyticsData = reportRes.data || { summary: {} };
-      const peakHoursData = peakRes.data || { forecast: {}, peak_hours: [], error: null };
-      const frequentVisitorsData = frequentRes.data?.visitors || [];
-      const suspiciousActivityData = suspiciousRes.data || { suspicious_visitors: [] };
-      const trendsData = Array.isArray(trendsRes.data?.trends) ? trendsRes.data.trends : [];
+      const [reportRes, peakRes, frequentRes, suspiciousRes, trendsRes, statusRes] =
+        await Promise.all([
+          api.get(`/api/analytics/report?days=${days}`).catch((e) => {
+            errors.push('Report');
+            return { data: { summary: {} } };
+          }),
+          api.get(`/api/analytics/peak-hours?days=${days}`).catch((e) => {
+            errors.push('Peak hours');
+            return { data: { forecast: {}, peak_hours: [], error: null } };
+          }),
+          api.get(`/api/analytics/frequent-visitors?limit=10`).catch((e) => {
+            errors.push('Frequent visitors');
+            return { data: { visitors: [] } };
+          }),
+          api.get(`/api/analytics/suspicious-activity?threshold=0.05`).catch((e) => {
+            errors.push('Suspicious activity');
+            return { data: { suspicious_visitors: [] } };
+          }),
+          api.get(`/api/analytics/trends?days=${days}`).catch((e) => {
+            errors.push('Trends');
+            return { data: { trends: [] } };
+          }),
+          api.get('/api/analytics/status-distribution').catch((e) => {
+            errors.push('Status distribution');
+            return { data: { distribution: [] } };
+          }),
+        ]);
 
-      setAnalytics(analyticsData);
-      setPeakHours(peakHoursData);
-      setFrequentVisitors(frequentVisitorsData);
-      setSuspiciousActivity(suspiciousActivityData);
-      setTrends(trendsData);
+      setAnalytics(reportRes.data || { summary: {} });
+      setPeakHours(peakRes.data || { forecast: {}, peak_hours: [], error: null });
+      setFrequentVisitors(frequentRes.data?.visitors || []);
+      setSuspiciousActivity(suspiciousRes.data || { suspicious_visitors: [] });
+      setTrends(Array.isArray(trendsRes.data?.trends) ? trendsRes.data.trends : []);
+      setStatusDistribution(statusRes.data?.distribution || []);
+      setPartialErrors(errors);
+      setLastUpdated(new Date());
     } catch (err) {
       console.error('Analytics fetch error:', err);
       setError('Failed to load analytics data. Please try again.');
@@ -87,27 +109,56 @@ const AnalyticsDashboard = () => {
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 pt-24 pb-12 px-4 sm:px-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">Analytics Dashboard</h1>
-          <p className="text-slate-400">Comprehensive visitor analytics and insights</p>
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-extrabold text-white mb-1">Analytics Dashboard</h1>
+            <p className="text-slate-400 text-sm">Comprehensive visitor analytics and AI-powered insights</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {lastUpdated && (
+              <span className="text-xs text-slate-500">
+                Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+            <button
+              onClick={fetchAnalytics}
+              disabled={loading}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
+            >
+              <svg
+                className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Time Period Selector */}
-        <div className="mb-8 flex flex-wrap gap-2 sm:gap-3">
+        <div className="mb-8 flex flex-wrap gap-2">
           {[7, 14, 30, 60, 90].map((d) => (
             <button
               key={d}
               onClick={() => setDays(d)}
-              className={`px-4 py-2 rounded-lg font-semibold transition transform hover:scale-105 ${
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
                 days === d
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
-                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                  : 'bg-slate-700/60 text-slate-300 hover:bg-slate-600'
               }`}
             >
-              {d} Days
+              {d}D
             </button>
           ))}
         </div>
@@ -119,47 +170,86 @@ const AnalyticsDashboard = () => {
           </div>
         )}
 
+        {partialErrors.length > 0 && !error && (
+          <div className="mb-6 p-3 bg-amber-900/30 border border-amber-700 rounded-lg text-amber-200 text-sm">
+            Some data could not be loaded: {partialErrors.join(', ')}
+          </div>
+        )}
+
         {/* Key Metrics */}
         {analytics && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <p className="text-slate-400 text-sm font-medium">Total Visitors</p>
-              <p className="text-3xl font-bold text-white mt-2">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="bg-slate-800/60 backdrop-blur p-5 rounded-2xl border border-slate-700/50">
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Total Visitors</p>
+              <p className="text-3xl font-extrabold text-white mt-2 stat-number">
                 {analytics.summary?.total_visitors ?? 0}
               </p>
-              <p className="text-xs text-slate-500 mt-2">Last {days} days</p>
+              <p className="text-xs text-slate-500 mt-1">Last {days} days</p>
             </div>
 
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <p className="text-slate-400 text-sm font-medium">Avg Daily Visitors</p>
-              <p className="text-3xl font-bold text-white mt-2">
+            <div className="bg-slate-800/60 backdrop-blur p-5 rounded-2xl border border-slate-700/50">
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Avg Daily</p>
+              <p className="text-3xl font-extrabold text-white mt-2 stat-number">
                 {analytics.summary?.avg_daily_visitors ?? 0}
               </p>
-              <p className="text-xs text-slate-500 mt-2">Per day average</p>
+              <p className="text-xs text-slate-500 mt-1">Per day average</p>
             </div>
 
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <p className="text-slate-400 text-sm font-medium">Repeat Visitors</p>
-              <p className="text-3xl font-bold text-white mt-2">
+            <div className="bg-slate-800/60 backdrop-blur p-5 rounded-2xl border border-slate-700/50">
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Repeat Visitors</p>
+              <p className="text-3xl font-extrabold text-emerald-400 mt-2 stat-number">
                 {frequentVisitors?.length ?? 0}
               </p>
-              <p className="text-xs text-slate-500 mt-2">Frequent visitors</p>
+              <p className="text-xs text-slate-500 mt-1">Frequent visitors</p>
             </div>
 
-            <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
-              <p className="text-slate-400 text-sm font-medium">Suspicious Activity</p>
-              <p className="text-3xl font-bold text-orange-400 mt-2">
+            <div className="bg-slate-800/60 backdrop-blur p-5 rounded-2xl border border-slate-700/50">
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Suspicious</p>
+              <p className="text-3xl font-extrabold text-amber-400 mt-2 stat-number">
                 {suspiciousActivity?.suspicious_visitors?.length ?? 0}
               </p>
-              <p className="text-xs text-slate-500 mt-2">Flagged visitors</p>
+              <p className="text-xs text-slate-500 mt-1">Flagged visitors</p>
             </div>
           </div>
         )}
 
         {/* Charts Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Status Distribution */}
+          {statusDistribution && statusDistribution.length > 0 && (
+            <div className="bg-slate-800/60 backdrop-blur p-6 rounded-2xl border border-slate-700/50">
+              <h2 className="text-xl font-bold text-white mb-4">Visitor Status Distribution</h2>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={statusDistribution.map((s) => ({
+                      name: s.status,
+                      value: s.count,
+                    }))}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label={({ name, percent }) =>
+                      `${name} ${(percent * 100).toFixed(0)}%`
+                    }
+                    dataKey="value"
+                  >
+                    {statusDistribution.map((_, idx) => (
+                      <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
+                    labelStyle={{ color: '#e2e8f0' }}
+                  />
+                  <Legend wrapperStyle={{ color: '#cbd5e1' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* Peak Hours */}
-          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+          <div className="bg-slate-800/60 backdrop-blur p-6 rounded-2xl border border-slate-700/50">
             <h2 className="text-xl font-bold text-white mb-4">Peak Hours Forecast</h2>
             {peakHoursData.length > 0 ? (
               <>
@@ -195,7 +285,7 @@ const AnalyticsDashboard = () => {
           </div>
 
           {/* Visitor Trends */}
-          <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+          <div className="bg-slate-800/60 backdrop-blur p-6 rounded-2xl border border-slate-700/50">
             <h2 className="text-xl font-bold text-white mb-4">Visitor Trends</h2>
             {trendsData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
@@ -229,8 +319,8 @@ const AnalyticsDashboard = () => {
         </div>
 
         {/* Frequent Visitors Table */}
-        <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600 mb-8">
-          <h2 className="text-xl font-bold text-white mb-4">Frequent Visitors</h2>
+        <div className="bg-slate-800/60 backdrop-blur p-6 rounded-2xl border border-slate-700/50 mb-8">
+          <h2 className="text-lg font-bold text-white mb-4">Frequent Visitors</h2>
           {frequentVisitors && frequentVisitors.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -271,12 +361,12 @@ const AnalyticsDashboard = () => {
         </div>
 
         {/* Suspicious Activity Alerts */}
-        <div className="bg-slate-700/50 p-6 rounded-lg border border-slate-600">
+        <div className="bg-slate-800/60 backdrop-blur p-6 rounded-2xl border border-slate-700/50">
           {suspiciousActivity?.suspicious_visitors && suspiciousActivity.suspicious_visitors.length > 0 ? (
             <>
-              <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                <span className="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></span>
-                Suspicious Activity Detected ({suspiciousActivity.suspicious_visitors.length})
+              <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse"></span>
+                Suspicious Activity ({suspiciousActivity.suspicious_visitors.length})
               </h2>
               <div className="space-y-3">
                 {suspiciousActivity.suspicious_visitors.map((visitor, idx) => (
