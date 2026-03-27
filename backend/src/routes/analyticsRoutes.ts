@@ -133,10 +133,46 @@ router.get("/trends", requireAdmin, asyncHandler(async (req: Request, res: Respo
  * Visitor count by status (registered, checked_in, checked_out)
  */
 router.get("/status-distribution", requireAdmin, asyncHandler(async (_req: Request, res: Response) => {
-  const response = await axios.get(`${ANALYTICS_URL}/analytics/status-distribution`, {
-    timeout: ANALYTICS_TIMEOUT_MS,
-  });
-  res.json(response.data);
+  const endpoints = [
+    `${ANALYTICS_URL}/analytics/status-distribution`,
+    `${ANALYTICS_URL}/analytics/status_distribution`,
+    `${ANALYTICS_URL}/status-distribution`,
+  ];
+
+  let lastError: unknown;
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        timeout: ANALYTICS_TIMEOUT_MS,
+      });
+
+      const rawData = response.data;
+      if (Array.isArray(rawData?.distribution)) {
+        res.json({ distribution: rawData.distribution });
+        return;
+      }
+
+      if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
+        const distribution = Object.entries(rawData)
+          .filter(([, count]) => Number.isFinite(Number(count)))
+          .map(([status, count]) => ({ status, count: Number(count) }));
+        res.json({ distribution });
+        return;
+      }
+
+      res.json({ distribution: [] });
+      return;
+    } catch (error: any) {
+      // Retry with the next known endpoint variant only for 404s.
+      if (error?.response?.status === 404) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError;
 }));
 
 export default router;

@@ -170,10 +170,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "analytics_api:app",
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8001")),
+        port=int(os.getenv("ANALYTICS_PORT", os.getenv("PORT", "8001"))),
         log_level="info",
-    )if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.getenv("ANALYTICS_PORT", "8001"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    )

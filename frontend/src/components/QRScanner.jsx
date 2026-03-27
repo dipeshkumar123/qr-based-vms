@@ -12,7 +12,10 @@ export default function QRScanner({ onScanSuccess, onClose }) {
   const preferredCameraIdRef = useRef(null);
   const recentScanRef = useRef({ token: '', timestamp: 0 });
   const html5QrCodeRef = useRef(null);
+  const onScanSuccessRef = useRef(onScanSuccess);
   const isCameraRunningRef = useRef(false);
+  const transitionLockRef = useRef(Promise.resolve());
+  const startAttemptRef = useRef(0);
   
   const previewElementId = useMemo(
     () => `qr-live-preview-${Math.random().toString(36).slice(2, 10)}`,
@@ -22,6 +25,10 @@ export default function QRScanner({ onScanSuccess, onClose }) {
     () => `qr-file-scan-${Math.random().toString(36).slice(2, 10)}`,
     []
   );
+
+  useEffect(() => {
+    onScanSuccessRef.current = onScanSuccess;
+  }, [onScanSuccess]);
 
   const processToken = useCallback((token, source) => {
     const value = token.trim();
@@ -40,8 +47,8 @@ export default function QRScanner({ onScanSuccess, onClose }) {
 
     setError('');
     setCameraError('');
-    onScanSuccess(value);
-  }, [onScanSuccess]);
+    onScanSuccessRef.current(value);
+  }, []);
 
   const scannerConfig = useMemo(
     () => ({
@@ -81,6 +88,12 @@ export default function QRScanner({ onScanSuccess, onClose }) {
         return;
       }
 
+      const currentAttempt = ++startAttemptRef.current;
+
+      if (!document.getElementById(previewElementId)) {
+        return;
+      }
+
       const scanner = ensureInstance();
       if (!scanner) {
         return;
@@ -92,6 +105,9 @@ export default function QRScanner({ onScanSuccess, onClose }) {
 
         if (!preferredCameraIdRef.current) {
           const cameras = await Html5Qrcode.getCameras();
+          if (!active || currentAttempt !== startAttemptRef.current) {
+            return;
+          }
           if (!cameras || cameras.length === 0) {
             setCameraError('No camera devices were found. Connect a camera and try again.');
             return;
@@ -106,6 +122,10 @@ export default function QRScanner({ onScanSuccess, onClose }) {
         }
 
         cameraIdOrConfig = preferredCameraIdRef.current ?? { facingMode: 'environment' };
+
+        if (!active || currentAttempt !== startAttemptRef.current || !document.getElementById(previewElementId)) {
+          return;
+        }
 
         await scanner.start(
           cameraIdOrConfig,
@@ -153,20 +173,28 @@ export default function QRScanner({ onScanSuccess, onClose }) {
     };
 
     if (scanMode !== 'camera') {
-      stopCamera().catch(() => undefined);
+      transitionLockRef.current = transitionLockRef.current
+        .then(() => stopCamera())
+        .catch(() => undefined);
     } else {
-      startCamera().catch(() => undefined);
+      transitionLockRef.current = transitionLockRef.current
+        .then(() => startCamera())
+        .catch(() => undefined);
     }
 
     return () => {
       active = false;
-      stopCamera().catch(() => undefined);
+      startAttemptRef.current += 1;
+      transitionLockRef.current = transitionLockRef.current
+        .then(() => stopCamera())
+        .catch(() => undefined);
     };
   }, [previewElementId, processToken, scannerConfig, scanMode]);
 
   useEffect(() => {
     return () => {
       const cleanup = async () => {
+        startAttemptRef.current += 1;
         if (html5QrCodeRef.current) {
           try {
             if (isCameraRunningRef.current) {
@@ -175,7 +203,7 @@ export default function QRScanner({ onScanSuccess, onClose }) {
           } catch {
             /* ignore */
           }
-          html5QrCodeRef.current.clear();
+          // Avoid calling clear() on teardown; the container may already be removed by modal unmount animation.
           html5QrCodeRef.current = null;
           isCameraRunningRef.current = false;
         }
@@ -226,7 +254,9 @@ export default function QRScanner({ onScanSuccess, onClose }) {
         setError('Could not read a QR code from that image. Try a clearer, well-lit photo.');
       } finally {
         try {
-          await fileScanner?.clear();
+          if (fileScanner && !fileScanner.isScanning) {
+            await fileScanner.clear();
+          }
         } catch {
           /* ignore */
         }

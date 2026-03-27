@@ -137,9 +137,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!isAdmin) {
       navigate('/admin/login');
-      return;
     }
-    fetchData();
   }, [isAdmin, navigate]);
 
   // Debounce search input by 400ms
@@ -166,7 +164,23 @@ export default function AdminDashboard() {
         apiClient.get('/api/ledger', { params: { page: ledgerPage, limit: ledgerLimit } }),
         apiClient.get('/api/visitors/stats')
       ]);
-      setVisitors(visitorsRes.data.items || []);
+
+      const visitorsWithBiometric = await Promise.all(
+        (visitorsRes.data.items || []).map(async (visitor) => {
+          if (visitor.biometricEnrolled) return visitor;
+          try {
+            const infoRes = await apiClient.get(`/api/biometric/info/${visitor.id}`);
+            return {
+              ...visitor,
+              biometricEnrolled: Boolean(infoRes.data?.has_encoding),
+            };
+          } catch {
+            return visitor;
+          }
+        })
+      );
+
+      setVisitors(visitorsWithBiometric);
       setVisitorsTotal(visitorsRes.data.total || 0);
       setLedger(ledgerRes.data.items || []);
       setLedgerTotal(ledgerRes.data.total || 0);
@@ -268,6 +282,11 @@ export default function AdminDashboard() {
 
   const handleVerificationSuccess = async (result, visitor) => {
     const confidenceText = `${(result.confidence_score * 100).toFixed(1)}% confidence`;
+    if (result.is_match) {
+      setVisitors((prev) =>
+        prev.map((v) => (v.id === visitor.id ? { ...v, biometricVerified: true } : v))
+      );
+    }
     // Optionally auto-check-in when registered and match is true
     if (visitor.status === 'registered' && result.is_match) {
       try {
@@ -315,15 +334,15 @@ export default function AdminDashboard() {
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="mb-8">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center">
               <div>
-                <h1 className="text-4xl font-bold mb-2">Admin Dashboard</h1>
+                <h1 className="text-3xl sm:text-4xl font-bold mb-2">Admin Dashboard</h1>
                 <p className="text-gray-600">Manage visitors and monitor system activity</p>
               </div>
-              <div className="flex gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto">
                 <button
                   onClick={() => { setScanMode('check-in'); setShowScanner(true); }}
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transition flex items-center gap-2"
+                  className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
@@ -332,7 +351,7 @@ export default function AdminDashboard() {
                 </button>
                 <button
                   onClick={() => { setScanMode('check-out'); setShowScanner(true); }}
-                  className="px-6 py-3 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg font-semibold hover:shadow-lg transition flex items-center gap-2"
+                  className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-lg font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -360,12 +379,12 @@ export default function AdminDashboard() {
           </AnimatePresence>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
             {statCards.map((card) => (
               <motion.div
                 key={card.key}
                 whileHover={{ y: -2 }}
-                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5 hover:shadow-md transition-shadow"
               >
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-medium text-gray-500">{card.label}</p>
@@ -375,7 +394,7 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 </div>
-                <p className="text-3xl font-extrabold text-gray-900 stat-number">{stats[card.key]}</p>
+                <p className="text-2xl sm:text-3xl font-extrabold text-gray-900 stat-number">{stats[card.key]}</p>
               </motion.div>
             ))}
           </div>
@@ -383,10 +402,10 @@ export default function AdminDashboard() {
           {/* Tabs */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="border-b border-gray-100">
-              <div className="flex">
+              <div className="flex overflow-x-auto">
                 <button
                   onClick={() => setActiveTab('visitors')}
-                  className={`px-6 py-4 font-semibold text-sm transition relative ${
+                  className={`px-4 sm:px-6 py-4 font-semibold text-sm transition relative whitespace-nowrap ${
                     activeTab === 'visitors'
                       ? 'text-blue-600'
                       : 'text-gray-400 hover:text-gray-600'
@@ -397,7 +416,7 @@ export default function AdminDashboard() {
                 </button>
                 <button
                   onClick={() => setActiveTab('ledger')}
-                  className={`px-6 py-4 font-semibold text-sm transition relative ${
+                  className={`px-4 sm:px-6 py-4 font-semibold text-sm transition relative whitespace-nowrap ${
                     activeTab === 'ledger'
                       ? 'text-blue-600'
                       : 'text-gray-400 hover:text-gray-600'
@@ -409,7 +428,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
               {activeTab === 'visitors' && (
                 <>
                   {/* Info Banner for Biometric Verification */}
@@ -436,7 +455,7 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  <div>
                     {filteredVisitors.length === 0 ? (
                       <div className="text-center py-12">
                         <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -446,60 +465,152 @@ export default function AdminDashboard() {
                         <p className="text-gray-400 text-sm">Registered visitors will appear here</p>
                       </div>
                     ) : (
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-gray-50/80">
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Name</th>
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Phone</th>
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Biometric</th>
-                            <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredVisitors.map((visitor) => (
-                            <tr key={visitor.id} className="border-b border-gray-50 hover:bg-blue-50/50 transition">
-                              <td className="py-3.5 px-4 font-medium text-gray-900">{visitor.name}</td>
-                              <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.email}</td>
-                              <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.phone}</td>
-                              <td className="py-3.5 px-4">
-                                <span
-                                  className={`badge ${
-                                    visitor.status === 'checked_in'
-                                      ? 'badge-success'
+                      <>
+                        <div className="hidden md:block overflow-x-auto">
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-gray-50/80">
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Name</th>
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Email</th>
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Phone</th>
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Status</th>
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Biometric</th>
+                                <th className="text-left py-3 px-4 font-semibold text-xs uppercase tracking-wider text-gray-500">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredVisitors.map((visitor) => (
+                                <tr key={visitor.id} className="border-b border-gray-50 hover:bg-blue-50/50 transition">
+                                  <td className="py-3.5 px-4 font-medium text-gray-900">{visitor.name}</td>
+                                  <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.email}</td>
+                                  <td className="py-3.5 px-4 text-gray-500 text-sm">{visitor.phone}</td>
+                                  <td className="py-3.5 px-4">
+                                    <span
+                                      className={`badge ${
+                                        visitor.status === 'checked_in'
+                                          ? 'badge-success'
+                                          : visitor.status === 'checked_out'
+                                          ? 'badge-neutral'
+                                          : 'badge-warning'
+                                      }`}
+                                    >
+                                      {visitor.status === 'checked_in'
+                                        ? 'Checked In'
+                                        : visitor.status === 'checked_out'
+                                        ? 'Checked Out'
+                                        : 'Registered'}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4">
+                                    {visitor.biometricEnrolled ? (
+                                      <span className="badge badge-success">Enrolled</span>
+                                    ) : (
+                                      <span className="badge badge-neutral">None</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4">
+                                    <div className="flex gap-1.5 flex-wrap">
+                                      {(() => {
+                                        const isVerified = Boolean(visitor.biometricVerified);
+                                        const canVerify = Boolean(visitor.biometricEnrolled) && !isVerified;
+                                        return (
+                                          <button
+                                            onClick={() => openVerificationModal(visitor)}
+                                            disabled={!canVerify}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                                              isVerified
+                                                ? 'bg-emerald-100 text-emerald-700 cursor-default'
+                                                : canVerify
+                                                ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                            title={isVerified ? 'Already verified' : visitor.biometricEnrolled ? 'Verify face' : 'Not enrolled'}
+                                          >
+                                            {isVerified ? 'Verified' : 'Verify'}
+                                          </button>
+                                        );
+                                      })()}
+                                      {visitor.status === 'registered' && (
+                                        <button
+                                          onClick={() => handleCheckIn(visitor.qrToken)}
+                                          className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-xs font-semibold transition"
+                                        >
+                                          Check In
+                                        </button>
+                                      )}
+                                      {visitor.status === 'checked_in' && (
+                                        <button
+                                          onClick={() => handleCheckOut(visitor.qrToken)}
+                                          className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 text-xs font-semibold transition"
+                                        >
+                                          Check Out
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => setConfirmDelete({ open: true, id: visitor.id, name: visitor.name })}
+                                        className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-xs font-semibold transition"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="md:hidden space-y-3">
+                          {filteredVisitors.map((visitor) => {
+                            const isVerified = Boolean(visitor.biometricVerified);
+                            const canVerify = Boolean(visitor.biometricEnrolled) && !isVerified;
+                            return (
+                              <div key={visitor.id} className="rounded-xl border border-gray-100 p-4 bg-white shadow-sm">
+                                <div className="flex items-start justify-between gap-3 mb-2">
+                                  <div>
+                                    <p className="font-semibold text-gray-900 leading-tight">{visitor.name}</p>
+                                    <p className="text-xs text-gray-500 break-all">{visitor.email}</p>
+                                    <p className="text-xs text-gray-500">{visitor.phone}</p>
+                                  </div>
+                                  <span
+                                    className={`badge ${
+                                      visitor.status === 'checked_in'
+                                        ? 'badge-success'
+                                        : visitor.status === 'checked_out'
+                                        ? 'badge-neutral'
+                                        : 'badge-warning'
+                                    }`}
+                                  >
+                                    {visitor.status === 'checked_in'
+                                      ? 'Checked In'
                                       : visitor.status === 'checked_out'
-                                      ? 'badge-neutral'
-                                      : 'badge-warning'
-                                  }`}
-                                >
-                                  {visitor.status === 'checked_in' 
-                                    ? 'Checked In' 
-                                    : visitor.status === 'checked_out'
-                                    ? 'Checked Out'
-                                    : 'Registered'}
-                                </span>
-                              </td>
-                              <td className="py-3.5 px-4">
-                                {visitor.biometricEnrolled ? (
-                                  <span className="badge badge-success">Enrolled</span>
-                                ) : (
-                                  <span className="badge badge-neutral">None</span>
-                                )}
-                              </td>
-                              <td className="py-3.5 px-4">
-                                <div className="flex gap-1.5 flex-wrap">
+                                      ? 'Checked Out'
+                                      : 'Registered'}
+                                  </span>
+                                </div>
+
+                                <div className="mb-3">
+                                  {visitor.biometricEnrolled ? (
+                                    <span className="badge badge-success">Enrolled</span>
+                                  ) : (
+                                    <span className="badge badge-neutral">None</span>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
                                   <button
                                     onClick={() => openVerificationModal(visitor)}
-                                    disabled={!visitor.biometricEnrolled}
+                                    disabled={!canVerify}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                                      visitor.biometricEnrolled
+                                      isVerified
+                                        ? 'bg-emerald-100 text-emerald-700 cursor-default'
+                                        : canVerify
                                         ? 'bg-violet-100 text-violet-700 hover:bg-violet-200'
                                         : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     }`}
-                                    title={visitor.biometricEnrolled ? 'Verify face' : 'Not enrolled'}
+                                    title={isVerified ? 'Already verified' : visitor.biometricEnrolled ? 'Verify face' : 'Not enrolled'}
                                   >
-                                    Verify
+                                    {isVerified ? 'Verified' : 'Verify'}
                                   </button>
                                   {visitor.status === 'registered' && (
                                     <button
@@ -524,11 +635,11 @@ export default function AdminDashboard() {
                                     Delete
                                   </button>
                                 </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     )}
                   </div>
 
@@ -537,7 +648,7 @@ export default function AdminDashboard() {
                     <div className="text-sm text-gray-500">
                       Showing <span className="font-semibold text-gray-700">{filteredVisitors.length === 0 ? 0 : (page - 1) * limit + 1}</span> to <span className="font-semibold text-gray-700">{Math.min(page * limit, visitorsTotal)}</span> of <span className="font-semibold text-gray-700">{visitorsTotal}</span>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-end">
                       <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
                       </button>
@@ -554,7 +665,7 @@ export default function AdminDashboard() {
               )}
 
               {activeTab === 'ledger' && (
-                <div className="overflow-x-auto">
+                <div>
                   {ledger.length === 0 ? (
                     <div className="text-center py-12">
                       <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -565,29 +676,45 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     <>
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-gray-50 border-b border-gray-200">
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Visitor ID</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Hash</th>
-                            <th className="text-left py-4 px-4 font-semibold text-gray-700">Timestamp</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ledger.map((entry, idx) => (
-                            <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50 transition">
-                              <td className="py-4 px-4 font-semibold text-gray-900">{entry.visitorId}</td>
-                              <td className="py-4 px-4 font-mono text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 inline-block">{entry.hash.substring(0, 16)}...</td>
-                              <td className="py-4 px-4 text-gray-600 text-sm">{new Date(entry.createdAt).toLocaleString()}</td>
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-200">
+                              <th className="text-left py-4 px-4 font-semibold text-gray-700">Visitor ID</th>
+                              <th className="text-left py-4 px-4 font-semibold text-gray-700">Hash</th>
+                              <th className="text-left py-4 px-4 font-semibold text-gray-700">Timestamp</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {ledger.map((entry, idx) => (
+                              <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50 transition">
+                                <td className="py-4 px-4 font-semibold text-gray-900">{entry.visitorId}</td>
+                                <td className="py-4 px-4 font-mono text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 inline-block">{entry.hash.substring(0, 16)}...</td>
+                                <td className="py-4 px-4 text-gray-600 text-sm">{new Date(entry.createdAt).toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="md:hidden space-y-3">
+                        {ledger.map((entry, idx) => (
+                          <div key={idx} className="rounded-xl border border-gray-100 p-4 bg-white shadow-sm">
+                            <p className="text-sm text-gray-500 mb-1">Visitor ID</p>
+                            <p className="font-semibold text-gray-900 mb-2">{entry.visitorId}</p>
+                            <p className="text-sm text-gray-500 mb-1">Hash</p>
+                            <p className="font-mono text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 break-all mb-2">{entry.hash}</p>
+                            <p className="text-sm text-gray-500 mb-1">Timestamp</p>
+                            <p className="text-sm text-gray-700">{new Date(entry.createdAt).toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+
                       <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">
                         <div className="text-sm text-gray-500">
                           Showing <span className="font-semibold text-gray-700">{(ledgerPage - 1) * ledgerLimit + 1}</span> to <span className="font-semibold text-gray-700">{Math.min(ledgerPage * ledgerLimit, ledgerTotal)}</span> of <span className="font-semibold text-gray-700">{ledgerTotal}</span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-end">
                           <button disabled={ledgerPage <= 1} onClick={() => setLedgerPage(p => Math.max(1, p - 1))} className="px-3.5 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition text-sm font-medium">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
                           </button>

@@ -11,6 +11,18 @@ export default defineConfig({
       "localhost",
       "127.0.0.1",
       ".ngrok-free.dev"
-    ]
+    ],
+    proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/uploads": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   }
 })

@@ -142,15 +142,77 @@ export async function listVisitors(options: ListVisitorsOptions = {}): Promise<{
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
+  const visitorColsRes = await pool.query<{ column_name: string }>(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'visitors'`
+  );
+  const visitorCols = new Set(visitorColsRes.rows.map((r) => r.column_name));
+  const hasBiometricVerifiedCol = visitorCols.has('biometric_verified');
+  const hasBiometricVerifiedAtCol = visitorCols.has('biometric_verified_at');
+
+  // Older databases may have verification_logs with different column names.
+  const verificationColsRes = await pool.query<{ column_name: string }>(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'verification_logs'`
+  );
+  const verificationCols = new Set(verificationColsRes.rows.map((r) => r.column_name));
+
+  let biometricVerifiedSql = hasBiometricVerifiedCol
+    ? `COALESCE(visitors.biometric_verified, false) as "biometricVerified"`
+    : `CASE WHEN EXISTS (
+        SELECT 1 FROM analytics_events ae
+        WHERE (ae.payload->>'visitor_id') ~ '^[0-9]+$'
+        AND (ae.payload->>'visitor_id')::int = visitors.id
+        AND ae.name = 'visitor_face_verified'
+        AND COALESCE(LOWER(ae.payload->>'is_match'), 'false') = 'true'
+      ) THEN true ELSE false END as "biometricVerified"`;
+  const biometricVerifiedAtSql = hasBiometricVerifiedAtCol
+    ? `visitors.biometric_verified_at as "biometricVerifiedAt"`
+    : `NULL::timestamptz as "biometricVerifiedAt"`;
+  const visitorCol = verificationCols.has("visitor_id")
+    ? 'vl.visitor_id'
+    : verificationCols.has("visitorId")
+    ? 'vl."visitorId"'
+    : null;
+  const matchCol = verificationCols.has("is_match")
+    ? 'vl.is_match'
+    : verificationCols.has("isMatch")
+    ? 'vl."isMatch"'
+    : null;
+
+  if (!hasBiometricVerifiedCol && visitorCol && matchCol) {
+    biometricVerifiedSql = `CASE WHEN (
+        EXISTS (
+          SELECT 1 FROM analytics_events ae
+          WHERE (ae.payload->>'visitor_id') ~ '^[0-9]+$'
+          AND (ae.payload->>'visitor_id')::int = visitors.id
+          AND ae.name = 'visitor_face_verified'
+          AND COALESCE(LOWER(ae.payload->>'is_match'), 'false') = 'true'
+        )
+        OR EXISTS (
+          SELECT 1 FROM verification_logs vl
+          WHERE ${visitorCol} = visitors.id
+          AND ${matchCol} = true
+        )
+      ) THEN true ELSE false END as "biometricVerified"`;
+  }
+
   const countSql = `SELECT COUNT(*)::int as total FROM visitors ${whereSql}`;
   const listSql = `SELECT id, name, email, phone, purpose, status, qr_token as "qrToken", 
             checked_in_at as "checkedInAt", checked_out_at as "checkedOutAt",
             created_at as "createdAt", updated_at as "updatedAt",
+            ${biometricVerifiedAtSql},
             CASE WHEN EXISTS (
               SELECT 1 FROM analytics_events ae
-              WHERE (ae.payload->>'visitor_id')::int = visitors.id
+              WHERE (ae.payload->>'visitor_id') ~ '^[0-9]+$'
+              AND (ae.payload->>'visitor_id')::int = visitors.id
               AND ae.name = 'visitor_face_captured'
-            ) THEN true ELSE false END as "biometricEnrolled"
+            ) THEN true ELSE false END as "biometricEnrolled",
+            ${biometricVerifiedSql}
      FROM visitors
      ${whereSql}
      ORDER BY created_at DESC

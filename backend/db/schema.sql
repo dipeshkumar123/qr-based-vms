@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS visitors (
   qr_token TEXT NOT NULL UNIQUE,
   checked_in_at TIMESTAMPTZ,
   checked_out_at TIMESTAMPTZ,
+  biometric_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  biometric_verified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

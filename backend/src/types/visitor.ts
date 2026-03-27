@@ -11,6 +11,8 @@ export interface Visitor {
   createdAt: string;
   updatedAt: string;
   biometricEnrolled?: boolean;
+  biometricVerified?: boolean;
+  biometricVerifiedAt?: string | null;
 }
 
 export interface CreateVisitorPayload {

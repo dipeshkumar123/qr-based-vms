@@ -5,6 +5,7 @@ import { z } from "zod";
 import { HttpError } from "../utils/httpError.js";
 import { requireAdmin } from "../middleware/requireAdmin.js";
 import { notifyFailedVerification } from "../services/notificationService.js";
+import { recordEvent } from "../services/analyticsService.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -20,6 +21,15 @@ const verifyLimiter = rateLimit({
   windowMs: 5 * 60_000,    // 5 minutes
   max: 20,                  // 20 attempts per window
   message: { message: "Too many verification attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Public capture limiter (registration flow)
+const captureLimiter = rateLimit({
+  windowMs: 10 * 60_000, // 10 minutes
+  max: 40,
+  message: { message: "Too many capture attempts, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -89,12 +99,26 @@ router.get("/health", asyncHandler(async (_req: Request, res: Response) => {
  * POST /api/biometric/capture
  * Capture and store visitor face encoding
  */
-router.post("/capture", requireAdmin, asyncHandler(async (req: Request, res: Response) => {
+router.post("/capture", captureLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { visitor_id, photo_base64 } = capturePhotoSchema.parse(req.body);
   const result = await callBiometricService("/capture", "POST", {
     visitor_id,
     photo_base64,
   });
+
+  if (result?.encoding_saved) {
+    await recordEvent("visitor_face_captured", {
+      visitor_id,
+      source: "backend_capture_proxy",
+    });
+  } else {
+    await recordEvent("visitor_face_capture_failed", {
+      visitor_id,
+      source: "backend_capture_proxy",
+      reason: result?.message || "encoding_not_saved",
+    });
+  }
+
   res.json(result);
 }));
 
@@ -111,6 +135,47 @@ router.post("/verify", verifyLimiter, asyncHandler(async (req: Request, res: Res
     photo_base64,
     match_threshold,
   });
+
+  await recordEvent(result?.is_match ? "visitor_face_verified" : "visitor_face_verify_failed", {
+    visitor_id,
+    is_match: Boolean(result?.is_match),
+    confidence_score: Number(result?.confidence_score ?? 0),
+    source: "backend_verify_proxy",
+  });
+
+  if (result?.success && result?.is_match) {
+    await pool.query(
+      `UPDATE visitors
+       SET biometric_verified = TRUE,
+           biometric_verified_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [visitor_id]
+    );
+  }
+
+  // Persist verification attempts for dashboard/state and audit trail.
+  // Support both snake_case and camelCase schemas in older databases.
+  const match = Boolean(result?.is_match);
+  const confidence = Number(result?.confidence_score ?? 0);
+  const reason = result?.message ?? null;
+  try {
+    await pool.query(
+      `INSERT INTO verification_logs (visitor_id, is_match, confidence_score, reason)
+       VALUES ($1, $2, $3, $4)`,
+      [visitor_id, match, confidence, reason]
+    );
+  } catch {
+    try {
+      await pool.query(
+        `INSERT INTO verification_logs ("visitorId", "isMatch", "confidenceScore", reason)
+         VALUES ($1, $2, $3, $4)`,
+        [visitor_id, match, confidence, reason]
+      );
+    } catch (e) {
+      logger.warn({ err: e, visitor_id }, "Failed to persist verification log entry");
+    }
+  }
   
   // Send notification if verification failed (fix: result.is_match, not result.match)
   if (result.success && !result.is_match) {

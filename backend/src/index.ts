@@ -1,5 +1,5 @@
 import "./config.js"; // Load env vars first
-import express from "express";
+import express, { type RequestHandler } from "express";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -56,7 +56,12 @@ async function bootstrap() {
   app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
   // ── Rate limiting ────────────────────────────────────────────────
-  const apiLimiter = rateLimit({ windowMs: 60_000, max: 200 });
+  const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
   app.use("/api", apiLimiter);
 
   // Registration-specific rate limit (more restrictive)
@@ -67,7 +72,15 @@ async function bootstrap() {
     standardHeaders: true,
     legacyHeaders: false,
   });
-  app.use("/api/visitors", registrationLimiter);
+  const registrationOnlyLimiter: RequestHandler = (req, res, next) => {
+    // Apply strict throttling only to public registration endpoint: POST /api/visitors
+    if (req.method === "POST" && req.path === "/") {
+      registrationLimiter(req, res, next);
+      return;
+    }
+    next();
+  };
+  app.use("/api/visitors", registrationOnlyLimiter);
 
   // Admin login rate limit (brute-force protection)
   const loginLimiter = rateLimit({

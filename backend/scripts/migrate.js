@@ -14,6 +14,10 @@ async function migrate() {
     console.log('✓ visitors.checked_in_at ensured');
     await client.query(`ALTER TABLE visitors ADD COLUMN IF NOT EXISTS checked_out_at TIMESTAMPTZ;`);
     console.log('✓ visitors.checked_out_at ensured');
+    await client.query(`ALTER TABLE visitors ADD COLUMN IF NOT EXISTS biometric_verified BOOLEAN NOT NULL DEFAULT FALSE;`);
+    console.log('✓ visitors.biometric_verified ensured');
+    await client.query(`ALTER TABLE visitors ADD COLUMN IF NOT EXISTS biometric_verified_at TIMESTAMPTZ;`);
+    console.log('✓ visitors.biometric_verified_at ensured');
 
     // Audit ledger prev_hash
     await client.query(`ALTER TABLE audit_ledger ADD COLUMN IF NOT EXISTS prev_hash TEXT;`);
