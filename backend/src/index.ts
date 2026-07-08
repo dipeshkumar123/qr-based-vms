@@ -113,7 +113,7 @@ async function bootstrap() {
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
-      // Create tables (idempotent)
+      // Create tables (idempotent) - include hash column
       await pool.query(`CREATE TABLE IF NOT EXISTS visitors (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -132,6 +132,7 @@ async function bootstrap() {
       await pool.query(`CREATE TABLE IF NOT EXISTS audit_ledger (
         id SERIAL PRIMARY KEY,
         visitor_id INTEGER REFERENCES visitors(id),
+        hash TEXT NOT NULL,
         action TEXT NOT NULL,
         details JSONB,
         prev_hash TEXT,
