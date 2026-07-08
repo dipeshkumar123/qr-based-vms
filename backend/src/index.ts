@@ -113,28 +113,7 @@ async function bootstrap() {
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
-      // Run migrations inline
-      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;`);
-      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS checked_out_at TIMESTAMPTZ;`);
-      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS biometric_verified BOOLEAN NOT NULL DEFAULT FALSE;`);
-      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS biometric_verified_at TIMESTAMPTZ;`);
-      await pool.query(`ALTER TABLE IF NOT EXISTS audit_ledger ADD COLUMN IF NOT EXISTS prev_hash TEXT;`);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS analytics_events (
-          id SERIAL PRIMARY KEY,
-          name TEXT NOT NULL,
-          payload JSONB,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-      `);
-      await pool.query(`CREATE TABLE IF NOT EXISTS audit_ledger (
-        id SERIAL PRIMARY KEY,
-        visitor_id INTEGER REFERENCES visitors(id),
-        action TEXT NOT NULL,
-        details JSONB,
-        prev_hash TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );`);
+      // Create tables (idempotent)
       await pool.query(`CREATE TABLE IF NOT EXISTS visitors (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -149,6 +128,20 @@ async function bootstrap() {
         biometric_verified_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS audit_ledger (
+        id SERIAL PRIMARY KEY,
+        visitor_id INTEGER REFERENCES visitors(id),
+        action TEXT NOT NULL,
+        details JSONB,
+        prev_hash TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS analytics_events (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        payload JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_status ON visitors(status);`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_created_at ON visitors(created_at DESC);`);
