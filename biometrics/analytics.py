@@ -28,14 +28,28 @@ logging.basicConfig(
 logger = logging.getLogger("analytics-engine")
 
 # ── Database config ─────────────────────────────────────────────────
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
-DB_NAME = os.getenv("POSTGRES_DB", "ii_vms")
+# Railway provides DATABASE_URL; Docker Compose uses individual vars.
+# DATABASE_URL takes precedence if set.
+_DATABASE_URL = os.getenv("DATABASE_URL", "")
+if _DATABASE_URL:
+    # Parse the DATABASE_URL (postgresql://user:pass@host:port/db)
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(_DATABASE_URL)
+    DB_HOST = _parsed.hostname or "localhost"
+    DB_PORT = str(_parsed.port or 5432)
+    DB_USER = _parsed.username or "postgres"
+    DB_PASSWORD = _parsed.password or "postgres"
+    DB_NAME = (_parsed.path or "/ii_vms").lstrip("/")
+else:
+    DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
+    DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+    DB_USER = os.getenv("POSTGRES_USER", "postgres")
+    DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+    DB_NAME = os.getenv("POSTGRES_DB", "ii_vms")
 
 # ── Cache configuration ────────────────────────────────────────────
 CACHE_TTL_SECONDS = int(os.getenv("ANALYTICS_CACHE_TTL", "60"))
+ANOMALY_MODEL_VERSION = os.getenv("ANOMALY_MODEL_VERSION", "iforest-v1")
 
 # ── Connection pool (singleton) ────────────────────────────────────
 _pool: Optional[pg_pool.ThreadedConnectionPool] = None
@@ -248,7 +262,7 @@ class AnalyticsEngine:
                 v.id as visitor_id,
                 v.name,
                 v.email,
-                COUNT(ae.*) as visit_count,
+                                COUNT(ae.id) as visit_count,
                 MAX(ae.created_at) as last_visit,
                 MIN(ae.created_at) as first_visit,
                 ROUND(
@@ -257,10 +271,16 @@ class AnalyticsEngine:
                 ) as days_as_visitor
             FROM visitors v
             JOIN analytics_events ae
-              ON (ae.payload->>'visitor_id')::int = v.id
-             AND ae.name = 'visitor_check_in'
+                            ON COALESCE(
+                                     ae.visitor_id,
+                                     CASE
+                                         WHEN (ae.payload->>'visitor_id') ~ '^[0-9]+$' THEN (ae.payload->>'visitor_id')::int
+                                         ELSE NULL
+                                     END
+                                 ) = v.id
+                         AND COALESCE(ae.event_type, ae.name) = 'visitor_check_in'
             GROUP BY v.id, v.name, v.email
-            HAVING COUNT(ae.*) >= %s
+                        HAVING COUNT(ae.id) >= %s
             ORDER BY visit_count DESC
             LIMIT %s
             """
@@ -290,7 +310,8 @@ class AnalyticsEngine:
     def detect_suspicious_activity(self, anomaly_threshold: float = 0.05) -> Dict[str, Any]:
         """
         Detect suspicious patterns using Isolation Forest.
-        Checks for unusual visit frequency and failed biometric verifications.
+        Includes visit frequency, failed verification ratio, time-of-day anomalies,
+        burstiness, and recent mismatch streaks.
         """
         cache_key = f"suspicious_{anomaly_threshold}"
         cached = cache_get(cache_key)
@@ -301,21 +322,122 @@ class AnalyticsEngine:
             # Clamp threshold
             anomaly_threshold = max(0.01, min(anomaly_threshold, 0.5))
 
-            query = """
-            SELECT 
-                v.id,
-                v.name,
-                v.email,
-                COUNT(*) as visit_count,
-                EXTRACT(EPOCH FROM MAX(v.checked_in_at) - MIN(v.created_at)) / 86400 as days_span,
-                COUNT(CASE WHEN ae.name = 'visitor_face_verify_failed' THEN 1 END) as failed_verifications,
-                COUNT(CASE WHEN ae.name = 'visitor_face_captured' THEN 1 END) as biometric_enrollments
-            FROM visitors v
-            LEFT JOIN analytics_events ae ON ae.payload->>'visitor_id' = v.id::text
-            WHERE v.checked_in_at IS NOT NULL
-            GROUP BY v.id, v.name, v.email
-            """
-            data = self._query_dicts(query, ())
+            visitors = self._query_dicts(
+                """
+                SELECT id, name, email
+                FROM visitors
+                WHERE checked_in_at IS NOT NULL
+                """,
+                (),
+            )
+
+            checkin_events = self._query_dicts(
+                """
+                SELECT
+                    COALESCE(
+                        ae.visitor_id,
+                        CASE
+                            WHEN (ae.payload->>'visitor_id') ~ '^[0-9]+$' THEN (ae.payload->>'visitor_id')::int
+                            ELSE NULL
+                        END
+                    ) AS visitor_id,
+                    COALESCE(ae.event_time, ae.created_at) AS ts
+                FROM analytics_events ae
+                WHERE COALESCE(ae.event_type, ae.name) = 'visitor_check_in'
+                """,
+                (),
+            )
+
+            verification_events = self._query_dicts(
+                """
+                SELECT
+                    COALESCE(
+                        ae.visitor_id,
+                        CASE
+                            WHEN (ae.payload->>'visitor_id') ~ '^[0-9]+$' THEN (ae.payload->>'visitor_id')::int
+                            ELSE NULL
+                        END
+                    ) AS visitor_id,
+                    COALESCE(ae.event_type, ae.name) AS evt,
+                    COALESCE(ae.event_time, ae.created_at) AS ts
+                FROM analytics_events ae
+                WHERE COALESCE(ae.event_type, ae.name) IN (
+                    'visitor_face_verify_failed',
+                    'visitor_face_verified',
+                    'visitor_face_captured'
+                )
+                """,
+                (),
+            )
+
+            by_visitor_checkins: Dict[int, List[datetime]] = {}
+            for row in checkin_events:
+                vid = row.get("visitor_id")
+                ts = row.get("ts")
+                if vid is None or ts is None:
+                    continue
+                by_visitor_checkins.setdefault(int(vid), []).append(ts)
+
+            by_visitor_verif: Dict[int, List[Dict[str, Any]]] = {}
+            for row in verification_events:
+                vid = row.get("visitor_id")
+                evt = row.get("evt")
+                ts = row.get("ts")
+                if vid is None or evt is None or ts is None:
+                    continue
+                by_visitor_verif.setdefault(int(vid), []).append({"evt": str(evt), "ts": ts})
+
+            data = []
+            for v in visitors:
+                vid = int(v["id"])
+                visits = sorted(by_visitor_checkins.get(vid, []))
+                if not visits:
+                    continue
+
+                visit_count = len(visits)
+                first_visit = visits[0]
+                last_visit = visits[-1]
+                days_span = max(1.0, float((last_visit - first_visit).total_seconds()) / 86400.0)
+                visit_frequency = visit_count / days_span
+
+                off_hours = sum(1 for ts in visits if ts.hour < 7 or ts.hour >= 21)
+                off_hour_ratio = off_hours / max(visit_count, 1)
+
+                daily_counts: Dict[str, int] = {}
+                for ts in visits:
+                    key = ts.date().isoformat()
+                    daily_counts[key] = daily_counts.get(key, 0) + 1
+                avg_daily = float(sum(daily_counts.values())) / max(len(daily_counts), 1)
+                max_daily = max(daily_counts.values()) if daily_counts else 0
+                burstiness_ratio = (float(max_daily) / max(avg_daily, 1.0)) if max_daily else 0.0
+
+                verifs = sorted(by_visitor_verif.get(vid, []), key=lambda x: x["ts"])
+                failed = sum(1 for e in verifs if e["evt"] == "visitor_face_verify_failed")
+                failed_ratio = failed / max(visit_count, 1)
+                enrollments = sum(1 for e in verifs if e["evt"] == "visitor_face_captured")
+
+                mismatch_streak = 0
+                for e in reversed(verifs):
+                    if e["evt"] == "visitor_face_verify_failed":
+                        mismatch_streak += 1
+                    elif e["evt"] == "visitor_face_verified":
+                        break
+
+                data.append(
+                    {
+                        "id": vid,
+                        "name": v.get("name"),
+                        "email": v.get("email"),
+                        "visit_count": visit_count,
+                        "visit_frequency": visit_frequency,
+                        "failed_ratio": failed_ratio,
+                        "failed_verifications": failed,
+                        "off_hour_ratio": off_hour_ratio,
+                        "burstiness_ratio": burstiness_ratio,
+                        "mismatch_streak": mismatch_streak,
+                        "biometric_enrollments": enrollments,
+                    }
+                )
 
             if not data or len(data) < 5:
                 return {
@@ -329,22 +451,44 @@ class AnalyticsEngine:
             features = []
             visitor_info = []
             for row in data:
-                days_span = float(row["days_span"] or 1)
                 visit_count = int(row["visit_count"])
+                visit_frequency = float(row["visit_frequency"])
+                failed_ratio = float(row["failed_ratio"])
                 failed = int(row["failed_verifications"])
-                visit_frequency = visit_count / max(days_span, 1)
-                failed_ratio = failed / max(visit_count, 1)
+                off_hour_ratio = float(row["off_hour_ratio"])
+                burstiness_ratio = float(row["burstiness_ratio"])
+                mismatch_streak = int(row["mismatch_streak"])
 
-                features.append([visit_count, visit_frequency, failed_ratio, failed])
+                features.append([
+                    visit_count,
+                    visit_frequency,
+                    failed_ratio,
+                    failed,
+                    off_hour_ratio,
+                    burstiness_ratio,
+                    mismatch_streak,
+                ])
                 visitor_info.append({
                     "id": row["id"],
                     "name": row["name"],
                     "email": row["email"],
+                    "offHourRatio": round(off_hour_ratio, 4),
+                    "burstiness": round(burstiness_ratio, 4),
+                    "mismatchStreak": mismatch_streak,
                 })
 
             X = np.array(features)
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)
+            feature_names = [
+                "visit_count",
+                "visit_frequency_per_day",
+                "failed_ratio",
+                "failed_verifications",
+                "off_hour_visit_ratio",
+                "burstiness_ratio",
+                "mismatch_streak",
+            ]
 
             model = IsolationForest(
                 contamination=anomaly_threshold, random_state=42, n_estimators=100
@@ -356,26 +500,53 @@ class AnalyticsEngine:
             for i, pred in enumerate(predictions):
                 if pred == -1:  # Anomaly
                     failed_ratio = features[i][2]
-                    if failed_ratio > 0.3:
+                    if features[i][6] >= 3:
+                        reason = "Repeated biometric mismatch streak"
+                    elif failed_ratio > 0.3:
                         reason = "High failed verification rate"
+                    elif features[i][4] > 0.45:
+                        reason = "Unusual off-hours visit pattern"
+                    elif features[i][5] > 2.5:
+                        reason = "Burst visit behavior detected"
                     elif features[i][1] > 2:
                         reason = "Unusually high visit frequency"
                     else:
                         reason = "Unusual visit pattern"
+
+                    z_abs = np.abs(X_scaled[i])
+                    top_idx = np.argsort(z_abs)[-2:][::-1]
+                    top_factors = [
+                        {
+                            "feature": feature_names[int(j)],
+                            "value": round(float(features[i][int(j)]), 4),
+                            "zScore": round(float(X_scaled[i][int(j)]), 4),
+                        }
+                        for j in top_idx
+                    ]
 
                     suspicious.append({
                         **visitor_info[i],
                         "visitCount": int(features[i][0]),
                         "visitFrequency": round(float(features[i][1]), 3),
                         "failedVerifications": int(features[i][3]),
+                        "offHourRatio": round(float(features[i][4]), 4),
+                        "burstiness": round(float(features[i][5]), 4),
+                        "mismatchStreak": int(features[i][6]),
                         "suspicionScore": round(float(scores[i]), 4),
                         "reason": reason,
+                        "topFactors": top_factors,
                     })
 
             result = {
                 "suspicious_count": len(suspicious),
                 "anomaly_threshold": anomaly_threshold,
                 "total_analyzed": len(data),
+                "model": {
+                    "name": "IsolationForest",
+                    "version": ANOMALY_MODEL_VERSION,
+                    "contamination": anomaly_threshold,
+                    "n_estimators": 100,
+                },
                 "suspicious_visitors": sorted(
                     suspicious, key=lambda x: x["suspicionScore"]
                 ),
@@ -415,6 +586,92 @@ class AnalyticsEngine:
         except Exception as e:
             logger.error("Failed to get visitor trends: %s", e)
             return []
+
+    def calibrate_anomaly_thresholds(
+        self,
+        thresholds: List[float],
+        target_alert_rate: float = 0.05,
+    ) -> Dict[str, Any]:
+        """
+        Calibrate anomaly threshold candidates using historical outcomes.
+
+        Since supervised labels are not available, this uses a proxy objective:
+        - suspicious rate should be close to target_alert_rate
+        - flagged set should contain meaningful failed-verification signal
+        """
+        try:
+            clean_thresholds = sorted(
+                {max(0.01, min(float(t), 0.5)) for t in thresholds}
+            )
+            if not clean_thresholds:
+                clean_thresholds = [0.03, 0.05, 0.08]
+
+            target_alert_rate = max(0.01, min(float(target_alert_rate), 0.5))
+
+            candidates: List[Dict[str, Any]] = []
+            best = None
+
+            for t in clean_thresholds:
+                analysis = self.detect_suspicious_activity(t)
+                total_analyzed = int(analysis.get("total_analyzed") or 0)
+                suspicious_count = int(analysis.get("suspicious_count") or 0)
+                suspicious_visitors = analysis.get("suspicious_visitors") or []
+
+                suspicious_rate = (
+                    float(suspicious_count) / float(total_analyzed)
+                    if total_analyzed > 0
+                    else 0.0
+                )
+
+                failed_ratios = []
+                for item in suspicious_visitors:
+                    visits = max(int(item.get("visitCount") or 0), 1)
+                    failed = int(item.get("failedVerifications") or 0)
+                    failed_ratios.append(float(failed) / float(visits))
+
+                avg_failed_ratio = (
+                    float(np.mean(failed_ratios)) if failed_ratios else 0.0
+                )
+
+                # Lower is better: near target alert rate, and higher failed-ratio quality.
+                calibration_score = abs(suspicious_rate - target_alert_rate) + max(
+                    0.0, (0.2 - avg_failed_ratio) * 0.25
+                )
+
+                row = {
+                    "threshold": round(t, 4),
+                    "suspicious_count": suspicious_count,
+                    "total_analyzed": total_analyzed,
+                    "suspicious_rate": round(suspicious_rate, 4),
+                    "avg_failed_ratio": round(avg_failed_ratio, 4),
+                    "calibration_score": round(calibration_score, 6),
+                }
+                candidates.append(row)
+
+                if best is None or row["calibration_score"] < best["calibration_score"]:
+                    best = row
+
+            return {
+                "target_alert_rate": round(target_alert_rate, 4),
+                "recommended_threshold": best["threshold"] if best else None,
+                "candidates": candidates,
+                "selected": best,
+                "method": {
+                    "name": "historical_proxy_calibration",
+                    "notes": [
+                        "Optimizes suspicious-rate proximity to target",
+                        "Penalizes candidates with weak failed-verification signal",
+                    ],
+                },
+            }
+        except Exception as e:
+            logger.error("Threshold calibration failed: %s", e)
+            return {
+                "target_alert_rate": target_alert_rate,
+                "recommended_threshold": None,
+                "candidates": [],
+                "error": "Calibration unavailable",
+            }
 
     def get_status_distribution(self) -> Dict[str, int]:
         """Get count of visitors by status (registered, checked_in, checked_out)."""

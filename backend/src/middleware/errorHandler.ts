@@ -2,30 +2,37 @@ import { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { HttpError } from "../utils/httpError.js";
 import { logger } from "../utils/logger.js";
+import { ErrorCodes, sendApiError } from "../utils/errorCatalog.js";
 
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction) {
-  const requestId = (req as any).id as string | undefined;
+  const requestId = req.id as string | undefined;
 
   if (error instanceof HttpError) {
-    return res.status(error.status).json({
+    return sendApiError(res, {
+      status: error.status,
       message: error.message,
-      ...(requestId && { requestId }),
+      code: error.code || ErrorCodes.INTERNAL_SERVER_ERROR,
+      requestId,
     });
   }
 
   if (error instanceof ZodError) {
-    return res.status(400).json({
+    return sendApiError(res, {
+      status: 400,
       message: "Validation failed",
-      issues: error.flatten(),
-      ...(requestId && { requestId }),
+      code: ErrorCodes.VALIDATION_FAILED,
+      requestId,
+      details: error.flatten(),
     });
   }
 
   // Handle malformed JSON body (SyntaxError from express.json())
   if (error instanceof SyntaxError && "body" in error) {
-    return res.status(400).json({
+    return sendApiError(res, {
+      status: 400,
       message: "Malformed JSON in request body",
-      ...(requestId && { requestId }),
+      code: ErrorCodes.VALIDATION_MALFORMED_JSON,
+      requestId,
     });
   }
 
@@ -34,8 +41,10 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     "Unexpected error"
   );
 
-  return res.status(500).json({
+  return sendApiError(res, {
+    status: 500,
     message: "Internal server error",
-    ...(requestId && { requestId }),
+    code: ErrorCodes.INTERNAL_SERVER_ERROR,
+    requestId,
   });
 }

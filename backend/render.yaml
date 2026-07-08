@@ -1,10 +1,10 @@
 services:
   - type: web
     name: ii-vms-backend
-    runtime: docker
+    runtime: image
     plan: free
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     envVars:
       - key: NODE_ENV
         value: production

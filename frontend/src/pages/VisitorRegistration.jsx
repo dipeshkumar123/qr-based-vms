@@ -34,7 +34,6 @@ export default function VisitorRegistration() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const [qrToken, setQrToken] = useState('');
-  const [visitorData, setVisitorData] = useState(null);
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState('');
   const [biometricStatus, setBiometricStatus] = useState(''); // 'pending', 'enrolled', 'failed'
@@ -64,7 +63,6 @@ export default function VisitorRegistration() {
     try {
       const response = await apiClient.post('/api/visitors', formData);
       setQrToken(response.data.qrToken);
-      setVisitorData(response.data);
 
       // If photo was captured, enroll in biometric system
       if (capturedPhoto) {

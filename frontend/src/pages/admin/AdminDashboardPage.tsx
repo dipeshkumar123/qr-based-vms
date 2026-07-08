@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { listVisitors, type Visitor } from "../../api";
+import { listVisitors } from "../../api";
 import { useAdminOutletContext } from "./AdminLayout";
 
 interface DailyStat {

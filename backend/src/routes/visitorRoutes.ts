@@ -15,11 +15,12 @@ import {
   handleExportCsv,
 } from "../controllers/visitorController.js";
 import { requireAdmin } from "../middleware/requireAdmin.js";
+import { idempotency } from "../middleware/idempotency.js";
 
 const router = Router();
 
 // Public
-router.post("/visitors", handleCreateVisitor);
+router.post("/visitors", idempotency(), handleCreateVisitor);
 
 // Admin-protected visitor endpoints
 router.get("/visitors/stats", requireAdmin, handleVisitorStats);
@@ -28,8 +29,8 @@ router.get("/visitors", requireAdmin, handleListVisitors);
 router.get("/visitors/id/:id", requireAdmin, handleGetVisitorById);
 router.put("/visitors/:id", requireAdmin, handleUpdateVisitor);
 router.get("/visitors/:token", requireAdmin, handleFindVisitor);
-router.post("/visitors/:token/check-in", requireAdmin, handleCheckIn);
-router.post("/visitors/:token/check-out", requireAdmin, handleCheckOut);
+router.post("/visitors/:token/check-in", requireAdmin, idempotency(), handleCheckIn);
+router.post("/visitors/:token/check-out", requireAdmin, idempotency(), handleCheckOut);
 router.delete("/visitors/:id", requireAdmin, handleDeleteVisitor);
 
 // Admin-protected ledger endpoints

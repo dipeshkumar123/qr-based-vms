@@ -8,21 +8,26 @@ Stores face encodings on disk (.npy) with optional photo snapshots.
 import os
 import base64
 import time
+import threading
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from io import BytesIO
 from typing import Optional
 import logging
 from datetime import datetime, timezone
+from collections import defaultdict, deque
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks, Depends, Header
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 import face_recognition
 from PIL import Image
 import httpx
+
+from storage import FileSystemStorage, InMemoryStorage
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -32,14 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger("biometric-service")
 
 # ── Configuration ───────────────────────────────────────────────────
-STORAGE_DIR = Path(os.getenv("STORAGE_DIR", "/tmp/ii_vms_photos"))
-STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-FACE_ENCODING_DIR = STORAGE_DIR / "encodings"
-FACE_ENCODING_DIR.mkdir(exist_ok=True)
-
-PHOTO_DIR = STORAGE_DIR / "photos"
-PHOTO_DIR.mkdir(exist_ok=True)
+STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "filesystem").lower()
 
 # Tolerance for face matching (lower = stricter matching)
 FACE_MATCH_TOLERANCE = float(os.getenv("FACE_MATCH_TOLERANCE", "0.6"))
@@ -55,6 +53,29 @@ MAX_PHOTO_BASE64_LENGTH = int(os.getenv("MAX_PHOTO_BASE64_LENGTH", "15000000"))
 # Allowed MIME types for uploaded files
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+METRICS_WINDOW = int(os.getenv("BIOMETRIC_METRICS_WINDOW", "300"))
+MAX_IMAGE_DIMENSION = int(os.getenv("BIOMETRIC_MAX_IMAGE_DIM", "1024"))
+ENCODING_CACHE_MAX_ITEMS = int(os.getenv("BIOMETRIC_ENCODING_CACHE_MAX", "512"))
+VERIFY_MAX_CONCURRENCY = int(os.getenv("BIOMETRIC_VERIFY_MAX_CONCURRENCY", "4"))
+
+if STORAGE_BACKEND == "memory":
+    storage = InMemoryStorage()
+else:
+    storage = FileSystemStorage(
+        storage_dir=os.getenv("STORAGE_DIR", "/tmp/ii_vms_photos"),
+        cache_max_items=ENCODING_CACHE_MAX_ITEMS
+    )
+
+_metrics_lock = threading.Lock()
+_request_metrics = defaultdict(lambda: {
+    "count": 0,
+    "errors": 0,
+    "latencies_ms": deque(maxlen=METRICS_WINDOW),
+})
+_failure_reason_counts = defaultdict(int)
+_verify_slots = threading.BoundedSemaphore(max(1, VERIFY_MAX_CONCURRENCY))
+_verify_inflight = set()
+_verify_inflight_lock = threading.Lock()
 
 
 # ── Lifespan (replaces deprecated on_event) ─────────────────────────
@@ -62,7 +83,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("Biometric service starting")
-    logger.info("Storage directory: %s", STORAGE_DIR)
+    logger.info("Storage backend: %s", storage.get_stats().get("storage_type"))
     logger.info("Face match tolerance: %.2f", FACE_MATCH_TOLERANCE)
     logger.info("Confidence threshold: %.2f", CONFIDENCE_THRESHOLD)
     logger.info("Backend URL: %s", BACKEND_URL)
@@ -101,6 +122,41 @@ async def verify_service_key(x_service_key: Optional[str] = Header(None)):
         return  # auth disabled
     if x_service_key != SERVICE_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing service key")
+
+
+def _percentile(sorted_values, pct: float) -> float:
+    if not sorted_values:
+        return 0.0
+    idx = int(round((pct / 100.0) * (len(sorted_values) - 1)))
+    return float(sorted_values[max(0, min(idx, len(sorted_values) - 1))])
+
+
+def mark_failure(reason: str):
+    with _metrics_lock:
+        _failure_reason_counts[reason] += 1
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or f"biometric-{int(time.time() * 1000)}"
+    request.state.request_id = request_id
+    start = time.perf_counter()
+    path = request.url.path
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["x-request-id"] = request_id
+        return response
+    finally:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        with _metrics_lock:
+            row = _request_metrics[path]
+            row["count"] += 1
+            if status_code >= 400:
+                row["errors"] += 1
+            row["latencies_ms"].append(elapsed_ms)
+        logger.info("request_id=%s path=%s status=%s latency_ms=%.2f", request_id, path, status_code, elapsed_ms)
 
 
 # ── Data Models ─────────────────────────────────────────────────────
@@ -157,8 +213,17 @@ def base64_to_image(photo_base64: str) -> Optional[Image.Image]:
         # Validate it's a real image
         image.verify()
         # Re-open after verify (verify consumes the stream)
-        image = Image.open(BytesIO(photo_bytes))
-        return image.convert("RGB")
+        image = Image.open(BytesIO(photo_bytes)).convert("RGB")
+
+        # Downscale large images to speed up face detection/encoding.
+        width, height = image.size
+        max_dim = max(width, height)
+        if max_dim > MAX_IMAGE_DIMENSION:
+            scale = MAX_IMAGE_DIMENSION / float(max_dim)
+            resized = (max(1, int(width * scale)), max(1, int(height * scale)))
+            image = image.resize(resized, Image.Resampling.LANCZOS)
+
+        return image
     except Exception as e:
         logger.error("Failed to decode image: %s", e)
         return None
@@ -212,48 +277,6 @@ def compare_face_encodings(
         return 0.0, 999.0
 
 
-def save_face_encoding(visitor_id: int, encoding: np.ndarray) -> bool:
-    """Save face encoding to disk as .npy."""
-    try:
-        encoding_path = FACE_ENCODING_DIR / f"visitor_{visitor_id}_encoding.npy"
-        np.save(encoding_path, encoding)
-        logger.info("Saved encoding for visitor %d", visitor_id)
-        return True
-    except Exception as e:
-        logger.error("Error saving encoding for visitor %d: %s", visitor_id, e)
-        return False
-
-
-def load_face_encoding(visitor_id: int) -> Optional[np.ndarray]:
-    """Load face encoding from disk."""
-    try:
-        encoding_path = FACE_ENCODING_DIR / f"visitor_{visitor_id}_encoding.npy"
-        if encoding_path.exists():
-            return np.load(encoding_path, allow_pickle=False)
-        return None
-    except Exception as e:
-        logger.error("Error loading encoding for visitor %d: %s", visitor_id, e)
-        return None
-
-
-def save_photo(visitor_id: int, image: Image.Image, suffix: str = "capture") -> bool:
-    """Save photo to disk with timestamp to avoid overwrites."""
-    try:
-        ts = int(time.time())
-        photo_path = PHOTO_DIR / f"visitor_{visitor_id}_{suffix}_{ts}.jpg"
-        image.save(photo_path, "JPEG", quality=85)
-        logger.info("Saved %s photo for visitor %d", suffix, visitor_id)
-        return True
-    except Exception as e:
-        logger.error("Error saving photo for visitor %d: %s", visitor_id, e)
-        return False
-
-
-def count_visitor_photos(visitor_id: int) -> int:
-    """Count how many photos are stored for a visitor."""
-    return len(list(PHOTO_DIR.glob(f"visitor_{visitor_id}_*")))
-
-
 async def notify_backend(event: str, data: dict):
     """
     Notify Node backend of biometric events via analytics events endpoint.
@@ -287,12 +310,52 @@ async def notify_backend(event: str, data: dict):
 @app.get("/health")
 async def health_check():
     """Health check — always returns 200."""
+    stats = storage.get_stats()
     return {
         "status": "healthy",
         "service": "biometric-recognition",
         "version": "2.0.0",
-        "storage_dir": str(STORAGE_DIR),
-        "encoding_count": len(list(FACE_ENCODING_DIR.glob("*.npy"))),
+        "storage_backend": stats.get("storage_type"),
+        "storage_dir": stats.get("storage_dir", "N/A"),
+        "encoding_count": stats.get("encodings_stored", 0),
+    }
+
+
+@app.get("/metrics")
+async def metrics(_auth: None = Depends(verify_service_key)):
+    with _metrics_lock:
+        endpoints = {}
+        total_count = 0
+        total_errors = 0
+        for path, stat in _request_metrics.items():
+            latencies = sorted(stat["latencies_ms"])
+            count = int(stat["count"])
+            errors = int(stat["errors"])
+            total_count += count
+            total_errors += errors
+            endpoints[path] = {
+                "count": count,
+                "errors": errors,
+                "error_rate": round((errors / count) if count else 0.0, 4),
+                "latency_ms": {
+                    "p50": round(_percentile(latencies, 50), 2),
+                    "p95": round(_percentile(latencies, 95), 2),
+                    "max": round(float(latencies[-1]) if latencies else 0.0, 2),
+                },
+            }
+
+        failure_reasons = dict(_failure_reason_counts)
+
+    return {
+        "service": "biometric-recognition",
+        "window_size": METRICS_WINDOW,
+        "summary": {
+            "requests": total_count,
+            "errors": total_errors,
+            "error_rate": round((total_errors / total_count) if total_count else 0.0, 4),
+        },
+        "endpoints": endpoints,
+        "failure_reasons": failure_reasons,
     }
 
 
@@ -310,10 +373,12 @@ async def capture_photo(
     """
     image = base64_to_image(request.photo_base64)
     if not image:
+        mark_failure("capture_invalid_image")
         raise HTTPException(status_code=400, detail="Invalid image format")
 
     encoding = extract_face_encoding(image)
     if encoding is None:
+        mark_failure("capture_no_face_detected")
         background_tasks.add_task(
             notify_backend,
             "visitor_face_capture_failed",
@@ -326,8 +391,8 @@ async def capture_photo(
             message="No face detected in photo. Please provide a clear face image.",
         )
 
-    encoding_saved = save_face_encoding(request.visitor_id, encoding)
-    photo_saved = save_photo(request.visitor_id, image, suffix="registered")
+    encoding_saved = storage.save_face_encoding(request.visitor_id, encoding)
+    photo_saved = storage.save_photo(request.visitor_id, image, suffix="registered")
 
     background_tasks.add_task(
         notify_backend,
@@ -361,72 +426,100 @@ async def verify_photo(
     POST /verify
     Body: { visitor_id: int, photo_base64: string, match_threshold?: float }
     """
-    stored_encoding = load_face_encoding(request.visitor_id)
-    if stored_encoding is None:
+    acquired_slot = _verify_slots.acquire(blocking=False)
+    if not acquired_slot:
+        mark_failure("verify_over_capacity")
+        raise HTTPException(
+            status_code=503,
+            detail="Verification service is busy. Please retry shortly.",
+        )
+
+    with _verify_inflight_lock:
+        if request.visitor_id in _verify_inflight:
+            _verify_slots.release()
+            mark_failure("verify_concurrent_same_visitor")
+            raise HTTPException(
+                status_code=409,
+                detail="Verification already in progress for this visitor. Retry in a moment.",
+            )
+        _verify_inflight.add(request.visitor_id)
+
+    try:
+        stored_encoding = storage.load_face_encoding(request.visitor_id)
+        if stored_encoding is None:
+            mark_failure("verify_no_stored_encoding")
+            background_tasks.add_task(
+                notify_backend,
+                "visitor_face_verify_failed",
+                {"visitor_id": request.visitor_id, "reason": "no_stored_encoding"},
+            )
+            return VerifyPhotoResponse(
+                success=False,
+                visitor_id=request.visitor_id,
+                is_match=False,
+                confidence_score=0.0,
+                message="No stored face encoding found for this visitor",
+            )
+
+        image = base64_to_image(request.photo_base64)
+        if not image:
+            mark_failure("verify_invalid_image")
+            raise HTTPException(status_code=400, detail="Invalid image format")
+
+        new_encoding = extract_face_encoding(image)
+        if new_encoding is None:
+            mark_failure("verify_no_face_detected")
+            background_tasks.add_task(
+                notify_backend,
+                "visitor_face_verify_failed",
+                {"visitor_id": request.visitor_id, "reason": "no_face_detected"},
+            )
+            return VerifyPhotoResponse(
+                success=False,
+                visitor_id=request.visitor_id,
+                is_match=False,
+                confidence_score=0.0,
+                message="No face detected in verification photo",
+            )
+
+        confidence, distance = compare_face_encodings(
+            stored_encoding, new_encoding, request.match_threshold
+        )
+        is_match = confidence >= CONFIDENCE_THRESHOLD
+        if not is_match:
+            mark_failure("verify_face_mismatch")
+
+        # Save verification photo (timestamped — no overwrites)
+        storage.save_photo(
+            request.visitor_id,
+            image,
+            suffix=f"verify_{'matched' if is_match else 'unmatched'}",
+        )
+
         background_tasks.add_task(
             notify_backend,
-            "visitor_face_verify_failed",
-            {"visitor_id": request.visitor_id, "reason": "no_stored_encoding"},
+            "visitor_face_verified",
+            {
+                "visitor_id": request.visitor_id,
+                "is_match": is_match,
+                "confidence_score": float(confidence),
+                "distance": float(distance),
+            },
         )
+
         return VerifyPhotoResponse(
-            success=False,
+            success=True,
             visitor_id=request.visitor_id,
-            is_match=False,
-            confidence_score=0.0,
-            message="No stored face encoding found for this visitor",
+            is_match=is_match,
+            confidence_score=float(confidence),
+            message="Face matches stored encoding"
+            if is_match
+            else "Face does not match stored encoding",
         )
-
-    image = base64_to_image(request.photo_base64)
-    if not image:
-        raise HTTPException(status_code=400, detail="Invalid image format")
-
-    new_encoding = extract_face_encoding(image)
-    if new_encoding is None:
-        background_tasks.add_task(
-            notify_backend,
-            "visitor_face_verify_failed",
-            {"visitor_id": request.visitor_id, "reason": "no_face_detected"},
-        )
-        return VerifyPhotoResponse(
-            success=False,
-            visitor_id=request.visitor_id,
-            is_match=False,
-            confidence_score=0.0,
-            message="No face detected in verification photo",
-        )
-
-    confidence, distance = compare_face_encodings(
-        stored_encoding, new_encoding, request.match_threshold
-    )
-    is_match = confidence >= CONFIDENCE_THRESHOLD
-
-    # Save verification photo (timestamped — no overwrites)
-    save_photo(
-        request.visitor_id,
-        image,
-        suffix=f"verify_{'matched' if is_match else 'unmatched'}",
-    )
-
-    background_tasks.add_task(
-        notify_backend,
-        "visitor_face_verified",
-        {
-            "visitor_id": request.visitor_id,
-            "is_match": is_match,
-            "confidence_score": float(confidence),
-            "distance": float(distance),
-        },
-    )
-
-    return VerifyPhotoResponse(
-        success=True,
-        visitor_id=request.visitor_id,
-        is_match=is_match,
-        confidence_score=float(confidence),
-        message="Face matches stored encoding"
-        if is_match
-        else "Face does not match stored encoding",
-    )
+    finally:
+        with _verify_inflight_lock:
+            _verify_inflight.discard(request.visitor_id)
+        _verify_slots.release()
 
 
 @app.get("/info/{visitor_id}", response_model=EncodingInfo)
@@ -435,22 +528,11 @@ async def get_encoding_info(visitor_id: int):
     if visitor_id <= 0:
         raise HTTPException(status_code=400, detail="visitor_id must be positive")
 
-    encoding_path = FACE_ENCODING_DIR / f"visitor_{visitor_id}_encoding.npy"
-    has_encoding = encoding_path.exists()
-
-    encoded_at = None
-    if has_encoding:
-        try:
-            stat = encoding_path.stat()
-            encoded_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-        except OSError:
-            pass
-
     return EncodingInfo(
         visitor_id=visitor_id,
-        has_encoding=has_encoding,
-        encoded_at=encoded_at,
-        photo_count=count_visitor_photos(visitor_id),
+        has_encoding=storage.has_encoding(visitor_id),
+        encoded_at=storage.get_encoding_time(visitor_id),
+        photo_count=storage.count_visitor_photos(visitor_id),
     )
 
 
@@ -532,16 +614,8 @@ async def delete_encoding(
     if visitor_id <= 0:
         raise HTTPException(status_code=400, detail="visitor_id must be positive")
 
-    deleted_files = 0
     try:
-        encoding_path = FACE_ENCODING_DIR / f"visitor_{visitor_id}_encoding.npy"
-        if encoding_path.exists():
-            encoding_path.unlink()
-            deleted_files += 1
-
-        for photo in PHOTO_DIR.glob(f"visitor_{visitor_id}_*"):
-            photo.unlink()
-            deleted_files += 1
+        deleted_files = storage.delete_visitor_data(visitor_id)
 
         return {
             "success": True,
@@ -562,16 +636,4 @@ async def service_stats():
     Service statistics — encoding count, storage usage, etc.
     Useful for monitoring dashboards.
     """
-    encoding_files = list(FACE_ENCODING_DIR.glob("*.npy"))
-    photo_files = list(PHOTO_DIR.glob("*.jpg"))
-
-    encoding_bytes = sum(f.stat().st_size for f in encoding_files)
-    photo_bytes = sum(f.stat().st_size for f in photo_files)
-
-    return {
-        "encodings_stored": len(encoding_files),
-        "photos_stored": len(photo_files),
-        "encoding_storage_mb": round(encoding_bytes / (1024 * 1024), 2),
-        "photo_storage_mb": round(photo_bytes / (1024 * 1024), 2),
-        "total_storage_mb": round((encoding_bytes + photo_bytes) / (1024 * 1024), 2),
-    }
+    return storage.get_stats()

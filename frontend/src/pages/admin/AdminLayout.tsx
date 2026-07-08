@@ -213,6 +213,7 @@ function AdminAccessCard({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAdminOutletContext() {
   return useOutletContext<AdminOutletContext>();
 }

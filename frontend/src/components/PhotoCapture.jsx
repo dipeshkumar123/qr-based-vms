@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
-export default function PhotoCapture({ onPhotoCaptured, onClose }) {
+export default function PhotoCapture({ onPhotoCaptured }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -9,6 +9,24 @@ export default function PhotoCapture({ onPhotoCaptured, onClose }) {
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [cameraError, setCameraError] = useState('');
   const [uploadMode, setUploadMode] = useState(false);
+
+  function stopCamera() {
+    if (streamRef.current) {
+      const tracks = streamRef.current.getTracks();
+      console.log('Stopping camera - tracks to stop:', tracks.length);
+      tracks.forEach(track => {
+        track.stop();
+        console.log('Camera track stopped:', track.label);
+      });
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraActive(false);
+  }
 
   // Handle video playback when camera becomes active
   useEffect(() => {
@@ -67,24 +85,6 @@ export default function PhotoCapture({ onPhotoCaptured, onClose }) {
       setCameraError(errorMessage);
       console.error('Camera error:', error);
     }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      const tracks = streamRef.current.getTracks();
-      console.log('Stopping camera - tracks to stop:', tracks.length);
-      tracks.forEach(track => {
-        track.stop();
-        console.log('Camera track stopped:', track.label);
-      });
-      streamRef.current = null;
-    }
-    
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    
-    setCameraActive(false);
   };
 
   const capturePhoto = () => {

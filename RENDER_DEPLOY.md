@@ -16,210 +16,155 @@
 
 ## Step 1: Create PostgreSQL Database
 
-1. Go to Render Dashboard → **"+ New"** → **"PostgreSQL"**
+1. Render Dashboard → **"+ New"** → **"PostgreSQL"**
 2. Configure:
    - **Name**: `ii-vms-db`
    - **Database**: `ii_vms`
    - **User**: `postgres`
-   - **Plan**: Free (or Starter)
+   - **Plan**: Free
 3. Click **"Create Database"**
-4. Copy the internal connection string (`DATABASE_URL`) for later use
+4. Copy **Internal Database URL** (starts with `postgresql://`) — you'll need this for Step 2
 
 ---
 
-## Step 2: Deploy Backend to Render
+## Step 2: Deploy Backend Service
 
-### Option A: Using render.yaml (Blueprint)
+Render Blueprint mode is recommended (automated):
 
-1. The file `backend/render.yaml` is provided in this project
-2. Push to GitHub
-3. In Render Dashboard: **"+ New"** → **"Blueprint"** → Select repo
-
-### Option B: Manual Deployment
-
-1. Render Dashboard → **"+ New"** → **"Web Service"**
+1. Render Dashboard → **"+ New"** → **"Blueprint"**
 2. Connect your GitHub repository
-3. Configure:
-   - **Name**: `ii-vms-backend`
-   - **Root Directory**: `backend`
-   - **Runtime**: **Docker**
-   - **Dockerfile Path**: `./Dockerfile`
-   - **Plan**: Free
-4. Add environment variables:
+3. Select the repo: `dipeshkumar123/qr-based-vms`
+4. Render will read `backend/render.yaml` and show:
+   - Web Service: `ii-vms-backend`
+   - Database: `ii-vms-db`
+5. Click **"Apply"**
+6. Wait for build to complete (~5 minutes)
 
-```
-NODE_ENV=production
-DATABASE_URL=<from Step 1>
-PORT=4000
-CORS_ORIGIN=https://your-frontend.vercel.app
-ADMIN_API_KEY=<generate-32-char-random-key>
-ADMIN_JWT_SECRET=<generate-32-char-random-key>
-ADMIN_JWT_EXPIRES_IN=2h
-SERVICE_API_KEY=<generate-32-char-random-key>
-BIOMETRIC_SERVICE_URL=https://ii-vms-biometrics.onrender.com
-ANALYTICS_SERVICE_URL=https://ii-vms-analytics.onrender.com
-UPLOAD_DIR=/tmp/uploads
-LOG_LEVEL=info
-ENABLE_RATE_LIMITING=true
-SECURE_COOKIES=true
-```
+### Important: Render detects the root `Dockerfile` by default
+The root `Dockerfile` is a **monolithic build** (Postgres + backend + frontend + biometrics in one container). For Render we deploy each service separately. The root Dockerfile has been renamed to `Dockerfile.monolith.old` so Render doesn't pick it up. The correct Dockerfile is at `backend/Dockerfile`.
 
-5. Click **"Create Web Service"**
+### Manual Alternative (if Blueprint doesn't work)
+1. Render Dashboard → **"+ New"** → **"Web Service"**
+2. Connect GitHub → Select repo
+3. **Name**: `ii-vms-backend`
+4. **Root Directory**: **Leave blank** (not `backend/`)
+5. **Runtime**: **Docker**
+6. **Dockerfile Path**: `backend/Dockerfile`
+7. **Plan**: Free
+8. Add environment variables:
+   - `NODE_ENV=production`
+   - `DATABASE_URL=<from Step 1>`
+   - `PORT=4000`
+   - `CORS_ORIGIN=https://your-frontend.vercel.app`
+   - `ADMIN_API_KEY=<32-char-random-key>`
+   - `ADMIN_JWT_SECRET=<32-char-random-key>`
+   - `ADMIN_JWT_EXPIRES_IN=2h`
+   - `SERVICE_API_KEY=<32-char-random-key>`
+   - `BIOMETRIC_SERVICE_URL=https://ii-vms-biometrics.onrender.com`
+   - `ANALYTICS_SERVICE_URL=https://ii-vms-analytics.onrender.com`
+   - `UPLOAD_DIR=/tmp/uploads`
+   - `LOG_LEVEL=info`
+9. Click **"Create Web Service"**
 
 ---
 
 ## Step 3: Run Database Migrations
 
-After backend deploys, run migrations:
-
-1. Go to backend service in Render Dashboard
-2. Click **"Shell"** tab
+1. In Render Dashboard, go to `ii-vms-backend` service
+2. Click **"Shell"** tab (or use Render's Exec)
 3. Run:
-```bash
-npm run migrate
-```
+   ```bash
+   npm run migrate
+   ```
 
 ---
 
 ## Step 4: Deploy Biometric Service
 
 1. Render Dashboard → **"+ New"** → **"Web Service"**
-2. Connect your GitHub repository
-3. Configure:
-   - **Name**: `ii-vms-biometrics`
-   - **Root Directory**: `biometrics`
-   - **Runtime**: **Docker**
-   - **Dockerfile Path**: `Dockerfile`
-   - **Plan**: Free
-4. Add environment variables:
-
-```
-PORT=8000
-STORAGE_DIR=/var/data
-FACE_MATCH_TOLERANCE=0.6
-CONFIDENCE_THRESHOLD=0.70
-BIOMETRIC_VERIFY_MAX_CONCURRENCY=4
-BACKEND_URL=https://ii-vms-backend.onrender.com
-SERVICE_API_KEY=<same-as-backend-SERVICE_API_KEY>
-```
-
-5. Click **"Create Web Service"**
+2. Connect GitHub → Select repo
+3. **Name**: `ii-vms-biometrics`
+4. **Root Directory**: **Leave blank**
+5. **Runtime**: Docker
+6. **Dockerfile Path**: `biometrics/Dockerfile`
+7. **Plan**: Free
+8. Environment variables:
+   - `PORT=8000`
+   - `STORAGE_DIR=/var/data`
+   - `FACE_MATCH_TOLERANCE=0.6`
+   - `CONFIDENCE_THRESHOLD=0.70`
+   - `BACKEND_URL=https://ii-vms-backend.onrender.com`
+   - `SERVICE_API_KEY=<same-as-backend>`
+9. Click **"Create Web Service"**
 
 ---
 
 ## Step 5: Deploy Analytics Service
 
 1. Render Dashboard → **"+ New"** → **"Web Service"**
-2. Connect your GitHub repository
-3. Configure:
-   - **Name**: `ii-vms-analytics`
-   - **Root Directory**: `biometrics`
-   - **Runtime**: **Docker**
-   - **Dockerfile Path**: `Dockerfile.analytics`
-   - **Plan**: Free
-4. Add environment variables:
-
-```
-PORT=8001
-POSTGRES_HOST=<from Step 1>
-POSTGRES_PORT=5432
-POSTGRES_DB=ii_vms
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<from Step 1>
-SERVICE_API_KEY=<same-as-backend-SERVICE_API_KEY>
-ANALYTICS_PORT=8001
-```
-
-5. Click **"Create Web Service"**
+2. Connect GitHub → Select repo
+3. **Name**: `ii-vms-analytics`
+4. **Root Directory**: **Leave blank**
+5. **Runtime**: Docker
+6. **Dockerfile Path**: `biometrics/Dockerfile.analytics`
+7. **Plan**: Free
+8. Environment variables:
+   - `PORT=8001`
+   - PostgreSQL connection vars from Step 1
+   - `SERVICE_API_KEY=<same-as-backend>`
+9. Click **"Create Web Service"**
 
 ---
 
-## Step 6: Update Backend CORS
+## Step 6: Deploy Frontend to Vercel
 
-After all services deploy, update backend environment:
-- `CORS_ORIGIN`: Add `https://ii-vms-backend.onrender.com`
-- `BIOMETRIC_SERVICE_URL`: Set to deployed biometrics URL
-- `ANALYTICS_SERVICE_URL`: Set to deployed analytics URL
-
----
-
-## Step 7: Deploy Frontend to Vercel
-
-1. The `frontend/vercel.json` is pre-configured to point to Render backend
-2. Push to GitHub
-3. In Vercel Dashboard:
-   - Import repository
-   - Root Directory: `frontend`
-   - Add env: `VITE_API_BASE_URL=https://ii-vms-backend.onrender.com`
-   - Deploy
+1. Go to https://vercel.com → Import GitHub repo
+2. **Root Directory**: `frontend`
+3. **Environment Variable**: `VITE_API_BASE_URL=https://ii-vms-backend.onrender.com`
+4. **Deploy**
+5. The `vercel.json` in `frontend/` already proxies `/api/*` and `/uploads/*` to Render backend
 
 ---
 
-## Step 8: Verify
+## Step 7: Verify Everything
 
-1. **Backend Health**: `curl https://ii-vms-backend.onrender.com/health`
-2. **Frontend**: Visit `https://your-frontend.vercel.app`
-3. **Register a visitor**: Frontend registration form
-4. **Admin login**: `/admin/login` with ADMIN_API_KEY
+| Endpoint | Expected |
+|----------|----------|
+| `https://ii-vms-backend.onrender.com/health` | `{"status":"ok"}` |
+| `https://ii-vms-backend.onrender.com/api/visitors` (POST) | 201 Created with QR token |
+| `https://ii-vms-biometrics.onrender.com/health` | 200 OK |
+| `https://ii-vms-analytics.onrender.com/health` | 200 OK |
+| `https://your-frontend.vercel.app` | II-VMS landing page loads |
 
 ---
+
+## Troubleshooting Render Build Failures
+
+### Error: `"/biometric-service" not found` or `"/docker" not found`
+**Cause**: The root `Dockerfile` is a monolithic build file that references directories (`biometric-service/`, `docker/`) that don't exist in the repository. Render may pick it up as the default Dockerfile.
+
+**Fix** (already done):
+- Root `Dockerfile` has been renamed to `Dockerfile.monolith.old`
+- Ensure Render is using `backend/Dockerfile` (not root `Dockerfile`)
+
+If using **Blueprint** (`backend/render.yaml`), Render should use the correct Dockerfile. If using **Manual Web Service**, set:
+- **Dockerfile Path**: `backend/Dockerfile`
+- Leave **Root Directory** blank
+
+## Files Created for Render
+
+| File | Purpose |
+|------|---------|
+| `backend/render.yaml` | Blueprint config for automated backend + PostgreSQL |
+| `RENDER_DEPLOY.md` | This guide |
+| `frontend/vercel.json` | Pre-configured to proxy API to Render |
+| `Dockerfile.monolith.old` | Original monolith Dockerfile (disabled) |
 
 ## Environment Variables Summary
 
-### Render Backend
-| Variable | Source |
-|----------|--------|
-| `NODE_ENV` | `production` |
-| `DATABASE_URL` | From Render PostgreSQL |
-| `PORT` | Auto-provided by Render |
-| `CORS_ORIGIN` | Vercel frontend URL |
-| `ADMIN_API_KEY` | Generate (min 32 chars) |
-| `ADMIN_JWT_SECRET` | Generate (min 32 chars) |
-| `SERVICE_API_KEY` | Generate (min 32 chars) |
-| `BIOMETRIC_SERVICE_URL` | `https://ii-vms-biometrics.onrender.com` |
-| `ANALYTICS_SERVICE_URL` | `https://ii-vms-analytics.onrender.com` |
-
-### Render Biometrics
-| Variable | Value |
-|----------|-------|
-| `PORT` | Auto-provided |
-| `BACKEND_URL` | `https://ii-vms-backend.onrender.com` |
-| `SERVICE_API_KEY` | Same as backend |
-
-### Render Analytics
-| Variable | Value |
-|----------|-------|
-| `PORT` | Auto-provided |
-| PostgreSQL vars | From Render PostgreSQL |
-| `SERVICE_API_KEY` | Same as backend |
-
-### Vercel Frontend
-| Variable | Value |
-|----------|-------|
-| `VITE_API_BASE_URL` | `https://ii-vms-backend.onrender.com` |
-
----
-
-## Costs (Render Free Tier)
-- **PostgreSQL**: Free for 90 days
-- **Backend**: 750 hours/month
-- **Biometrics**: 750 hours/month
-- **Analytics**: 750 hours/month
-- **Total**: Free (with trial)
-
-## Troubleshooting
-
-### Backend won't start
-- Check logs for `DATABASE_URL` errors
-- Ensure PostgreSQL is created first
-- Verify `DATABASE_URL` format
-
-### CORS errors in browser
-- Update `CORS_ORIGIN` in backend Render env
-- Must match exact frontend URL (no trailing slash)
-- Redeploy backend
-
-### Frontend API calls fail
-- Check Vercel rewrites in `vercel.json`
-- Verify `VITE_API_BASE_URL` in Vercel environment
-- Ensure Render backend is publicly accessible
+| Service | Key Variables |
+|---------|--------------|
+| Backend | `DATABASE_URL`, `ADMIN_API_KEY`, `ADMIN_JWT_SECRET`, `CORS_ORIGIN` |
+| Biometrics | `BACKEND_URL`, `SERVICE_API_KEY` |
+| Analytics | PostgreSQL connection vars, `SERVICE_API_KEY` |
+| Frontend (Vercel) | `VITE_API_BASE_URL` → Render backend |

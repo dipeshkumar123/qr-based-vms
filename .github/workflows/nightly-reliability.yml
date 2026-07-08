@@ -1,0 +1,100 @@
+name: Nightly Reliability Drills
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  reliability-drills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      ADMIN_API_KEY: nightly-admin-key
+      ADMIN_JWT_SECRET: nightly-jwt-secret-with-min-24-chars
+      SERVICE_API_KEY: nightly-service-key
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5434/ii_vms
+      CONTRACT_BASE_URL: http://localhost:4000
+      PERF_BASE_URL: http://localhost:4000
+      LOAD_BASE_URL: http://localhost:4000
+      CHAOS_BASE_URL: http://localhost:4000
+      PERF_RUNS: 5
+      PERF_ANALYTICS_P95_MS: 1800
+      PERF_BIOMETRIC_P95_MS: 2400
+      LOAD_DURATION_SECONDS: 15
+      LOAD_CONCURRENCY: 6
+      LOAD_MAX_ERROR_RATE: 0.08
+      LOAD_MAX_P95_MS: 2600
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Start stack
+        run: docker compose up -d --build
+
+      - name: Wait for backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..40}; do
+            if curl -fsS http://localhost:4000/health >/dev/null; then
+              echo "Backend is healthy"
+              exit 0
+            fi
+            echo "Waiting for backend... ($i/40)"
+            sleep 5
+          done
+          echo "Backend did not become healthy in time"
+          exit 1
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Contract analytics test
+        working-directory: backend
+        run: npm run contract:analytics
+
+      - name: Performance regression check
+        working-directory: backend
+        run: npm run perf:check
+
+      - name: Load test
+        working-directory: backend
+        run: npm run load:test
+
+      - name: Chaos test (biometric down)
+        working-directory: backend
+        run: |
+          docker compose stop biometric
+          CHAOS_MODE=biometric_down npm run chaos:test
+
+      - name: Chaos test (analytics down)
+        working-directory: backend
+        run: |
+          docker compose stop analytics
+          CHAOS_MODE=analytics_down npm run chaos:test
+
+      - name: Upload compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color > compose-failure.log
+
+      - name: Upload failure log artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-failure-log
+          path: compose-failure.log
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

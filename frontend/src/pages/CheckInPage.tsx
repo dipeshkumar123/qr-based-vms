@@ -139,8 +139,6 @@ export function CheckInPage({ adminEnabled, adminStatus }: CheckInPageProps) {
 
       try {
         setCameraError(null);
-        let cameraIdOrConfig: string | MediaTrackConstraints;
-
         if (!preferredCameraIdRef.current) {
           const cameras = await Html5Qrcode.getCameras();
           if (!cameras || cameras.length === 0) {
@@ -155,7 +153,7 @@ export function CheckInPage({ adminEnabled, adminStatus }: CheckInPageProps) {
           preferredCameraIdRef.current = environmentCamera.id;
         }
 
-        cameraIdOrConfig = preferredCameraIdRef.current ?? { facingMode: "environment" };
+        const cameraIdOrConfig = preferredCameraIdRef.current ?? { facingMode: "environment" };
 
         await scanner.start(
           cameraIdOrConfig,

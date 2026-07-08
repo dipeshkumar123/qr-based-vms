@@ -10,7 +10,7 @@ import path from "path";
 // pino-http may export default or named depending on module resolution
 const pinoHttp = (pinoHttpModule as any).default || pinoHttpModule;
 import { randomUUID } from "crypto";
-import { ensureDatabaseConnection, pool } from "./db/pool.js";
+import { ensureDatabaseConnection, pool, validateDatabaseSchema } from "./db/pool.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
@@ -19,7 +19,8 @@ import adminRoutes from "./routes/adminRoutes.js";
 import biometricRoutes from "./routes/biometricRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import { logger } from "./utils/logger.js";
-import { serverConfig } from "./config.js";
+import { getSecretHygieneWarnings, serverConfig, servicesConfig } from "./config.js";
+import { ErrorCodes, sendApiError } from "./utils/errorCatalog.js";
 import type { IncomingMessage } from "http";
 
 async function bootstrap() {
@@ -29,16 +30,22 @@ async function bootstrap() {
   app.use(
     pinoHttp({
       logger,
-      genReqId: (req: IncomingMessage) => (req as any).id || randomUUID(),
+      genReqId: (req: IncomingMessage) => {
+        const expressReq = req as express.Request;
+        const incoming = expressReq.headers?.["x-request-id"];
+        if (typeof incoming === "string" && incoming.trim()) return incoming.trim();
+        return expressReq.id || randomUUID();
+      },
       autoLogging: {
         ignore: (req: IncomingMessage) => {
           // Don't log health/ready checks (noisy in k8s)
-          const url = (req as any).originalUrl || (req as any).url || "";
+          const expressReq = req as express.Request;
+          const url = expressReq.originalUrl || expressReq.url || "";
           return url === "/health" || url === "/ready";
         },
       },
       customProps: (req: IncomingMessage) => ({
-        requestId: (req as any).id,
+        requestId: (req as express.Request).id,
       }),
     })
   );
@@ -96,8 +103,17 @@ async function bootstrap() {
     logger.warn("ADMIN_API_KEY is not set; admin endpoints will be disabled.");
   }
 
+  const secretWarnings = getSecretHygieneWarnings();
+  if (secretWarnings.length > 0) {
+    if (serverConfig.isProd) {
+      logger.fatal({ warnings: secretWarnings }, "Secret hygiene check failed in production");
+      process.exit(1);
+    }
+    logger.warn({ warnings: secretWarnings }, "Secret hygiene warnings detected");
+  }
+
   // ── Health & readiness probes ────────────────────────────────────
-  app.get("/health", (_req, res) => {
+  app.get(["/health", "/api/health"], (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
@@ -108,6 +124,48 @@ async function bootstrap() {
     } catch {
       res.status(503).json({ status: "degraded" });
     }
+  });
+
+  app.get("/health/dependencies", async (_req, res) => {
+    const check = async (name: string, fn: () => Promise<void>) => {
+      const startedAt = Date.now();
+      try {
+        await fn();
+        return { name, ok: true, latencyMs: Date.now() - startedAt };
+      } catch (error) {
+        return {
+          name,
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : "unknown error",
+        };
+      }
+    };
+
+    const analyticsUrl = `${servicesConfig.analyticsUrl}/health`;
+    const biometricUrl = `${servicesConfig.biometricUrl}/health`;
+
+    const [db, analytics, biometric] = await Promise.all([
+      check("database", async () => {
+        await pool.query("SELECT 1");
+      }),
+      check("analytics", async () => {
+        const r = await fetch(analyticsUrl, {
+          headers: servicesConfig.serviceApiKey ? { "x-service-key": servicesConfig.serviceApiKey } : undefined,
+        });
+        if (!r.ok) throw new Error(`status ${r.status}`);
+      }),
+      check("biometric", async () => {
+        const r = await fetch(biometricUrl, {
+          headers: servicesConfig.serviceApiKey ? { "x-service-key": servicesConfig.serviceApiKey } : undefined,
+        });
+        if (!r.ok) throw new Error(`status ${r.status}`);
+      }),
+    ]);
+
+    const checks = [db, analytics, biometric];
+    const ok = checks.every((c) => c.ok);
+    res.status(ok ? 200 : 503).json({ status: ok ? "healthy" : "degraded", checks });
   });
 
   // ── Static file serving for uploads ──────────────────────────────
@@ -123,8 +181,13 @@ async function bootstrap() {
   app.use("/api", uploadRoutes);
 
   // ── 404 handler for unmatched routes ─────────────────────────────
-  app.use((_req, res) => {
-    res.status(404).json({ message: "Not found" });
+  app.use((req, res) => {
+    sendApiError(res, {
+      status: 404,
+      message: "Not found",
+      code: ErrorCodes.ROUTE_NOT_FOUND,
+      requestId: (req.id as string),
+    });
   });
 
   // ── Global error handler ─────────────────────────────────────────
@@ -132,6 +195,11 @@ async function bootstrap() {
 
   // ── Database connection with retry ───────────────────────────────
   await ensureDatabaseConnection();
+  const schema = await validateDatabaseSchema();
+  if (!schema.ok) {
+    logger.fatal({ missing: schema.missing }, "Required database schema is missing. Run migrations before starting backend.");
+    process.exit(1);
+  }
 
   const server = app.listen(serverConfig.port, () => {
     logger.info(`II-VMS backend running on port ${serverConfig.port} (${serverConfig.nodeEnv})`);

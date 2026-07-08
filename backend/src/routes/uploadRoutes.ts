@@ -5,12 +5,17 @@ import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { requireAdmin } from "../middleware/requireAdmin.js";
 import { serverConfig } from "../config.js";
+import { ErrorCodes, sendApiError } from "../utils/errorCatalog.js";
 
 const router = Router();
 
 const uploadDir = path.resolve(serverConfig.uploadDir);
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (err) {
+    console.warn("Failed to create uploadDir, possibly in a read-only serverless environment:", err);
+  }
 }
 
 const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
@@ -37,7 +42,12 @@ const upload = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024
 router.post("/uploads", requireAdmin, upload.single("image"), (req: Request, res: Response) => {
   const file = req.file;
   if (!file) {
-    return res.status(400).json({ message: "No file uploaded" });
+    return sendApiError(res, {
+      status: 400,
+      message: "No file uploaded",
+      code: ErrorCodes.VALIDATION_FILE_REQUIRED,
+      requestId: (req.id as string),
+    });
   }
   const baseUrl = serverConfig.publicBaseUrl || `${req.protocol}://${req.get("host")}`;
   const urlPath = `/uploads/${file.filename}`;

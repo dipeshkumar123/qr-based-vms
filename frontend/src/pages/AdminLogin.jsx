@@ -25,7 +25,7 @@ export default function AdminLogin() {
       } else {
         setError('Invalid admin key. Please try again.');
       }
-    } catch (err) {
+    } catch {
       setError('Invalid admin key. Please try again.');
     } finally {
       setLoading(false);

@@ -9,12 +9,28 @@ import { recordEvent } from "../services/analyticsService.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { servicesConfig } from "../config.js";
+import { biometricFallbackConfig, servicesConfig, upstreamConfig } from "../config.js";
+import { CircuitBreaker } from "../utils/circuitBreaker.js";
 
 const router = Router();
 
 const BIOMETRIC_SERVICE_URL = servicesConfig.biometricUrl;
 const BIOMETRIC_TIMEOUT_MS = 30_000;
+
+const biometricBreaker = new CircuitBreaker({
+  name: "biometric",
+  failureThreshold: upstreamConfig.circuitBreaker.failureThreshold,
+  resetTimeoutMs: upstreamConfig.circuitBreaker.resetTimeoutMs,
+  halfOpenSuccesses: upstreamConfig.circuitBreaker.halfOpenSuccesses,
+  unavailableMessage: "Biometric service temporarily unavailable",
+  unavailableCode: "BIOMETRIC_CIRCUIT_OPEN",
+  shouldCountFailure: (error: any) => {
+    if (error instanceof HttpError && typeof error.status === "number") {
+      return error.status === 429 || error.status >= 500;
+    }
+    return true;
+  },
+});
 
 // Rate limit on verification endpoint (brute-force protection)
 const verifyLimiter = rateLimit({
@@ -34,56 +50,83 @@ const captureLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const BASE64_IMAGE_REGEX = /^[A-Za-z0-9+/=\s]+$/;
+
+function isLikelyValidBase64Image(value: string): boolean {
+  return BASE64_IMAGE_REGEX.test(value);
+}
+
 // Validation schemas — photo_base64 now has max length (10MB base64 ≈ 13.3M chars)
 const capturePhotoSchema = z.object({
   visitor_id: z.number().int().positive(),
-  photo_base64: z.string().min(100).max(15_000_000),
-});
+  photo_base64: z.string().trim().min(100).max(15_000_000).refine(isLikelyValidBase64Image, {
+    message: "photo_base64 must be valid base64 image data",
+  }),
+}).strict();
 
 const verifyPhotoSchema = z.object({
   visitor_id: z.number().int().positive(),
-  photo_base64: z.string().min(100).max(15_000_000),
+  photo_base64: z.string().trim().min(100).max(15_000_000).refine(isLikelyValidBase64Image, {
+    message: "photo_base64 must be valid base64 image data",
+  }),
   match_threshold: z.number().min(0).max(1).optional(),
-});
+}).strict();
 
 // Helper to call biometric service with timeout
 async function callBiometricService(
   endpoint: string,
   method: "GET" | "POST" | "DELETE" = "POST",
-  body?: any
+  body?: any,
+  requestId?: string
 ): Promise<any> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), BIOMETRIC_TIMEOUT_MS);
+  return biometricBreaker.execute(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BIOMETRIC_TIMEOUT_MS);
 
-  try {
-    const url = `${BIOMETRIC_SERVICE_URL}${endpoint}`;
-    const options: any = {
-      method,
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-    };
+    try {
+      const url = `${BIOMETRIC_SERVICE_URL}${endpoint}`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (servicesConfig.serviceApiKey) {
+        headers["x-service-key"] = servicesConfig.serviceApiKey;
+      }
+      if (requestId) {
+        headers["x-request-id"] = requestId;
+      }
 
-    if (body) {
-      options.body = JSON.stringify(body);
+      const options: any = {
+        method,
+        headers,
+        signal: controller.signal,
+      };
+
+      if (body) {
+        options.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(url, options);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new HttpError(response.status, `Biometric service error: ${errorText}`);
+      }
+
+      return await response.json();
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error instanceof HttpError) throw error;
+      if (error.name === "AbortError") {
+        throw new HttpError(504, "Biometric service timed out");
+      }
+      throw new HttpError(503, `Biometric service unavailable: ${error.message}`);
     }
+  });
+}
 
-    const response = await fetch(url, options);
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new HttpError(response.status, `Biometric service error: ${errorText}`);
-    }
-
-    return await response.json();
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error instanceof HttpError) throw error;
-    if (error.name === "AbortError") {
-      throw new HttpError(504, "Biometric service timed out");
-    }
-    throw new HttpError(503, `Biometric service unavailable: ${error.message}`);
-  }
+function isBiometricUnavailable(error: unknown): boolean {
+  if (!(error instanceof HttpError)) return false;
+  if (error.code === "BIOMETRIC_CIRCUIT_OPEN") return true;
+  return [429, 503, 504].includes(error.status);
 }
 
 /**
@@ -91,7 +134,7 @@ async function callBiometricService(
  * Check biometric service health
  */
 router.get("/health", asyncHandler(async (_req: Request, res: Response) => {
-  const result = await callBiometricService("/health", "GET");
+  const result = await callBiometricService("/health", "GET", undefined, (_req.id as string));
   res.json(result);
 }));
 
@@ -104,7 +147,7 @@ router.post("/capture", captureLimiter, asyncHandler(async (req: Request, res: R
   const result = await callBiometricService("/capture", "POST", {
     visitor_id,
     photo_base64,
-  });
+  }, (req.id as string));
 
   if (result?.encoding_saved) {
     await recordEvent("visitor_face_captured", {
@@ -130,11 +173,52 @@ router.post("/verify", verifyLimiter, asyncHandler(async (req: Request, res: Res
   const { visitor_id, photo_base64, match_threshold } = verifyPhotoSchema.parse(
     req.body
   );
-  const result = await callBiometricService("/verify", "POST", {
-    visitor_id,
-    photo_base64,
-    match_threshold,
-  });
+  let result: any;
+  try {
+    result = await callBiometricService("/verify", "POST", {
+      visitor_id,
+      photo_base64,
+      match_threshold,
+    }, (req.id as string));
+  } catch (error) {
+    if (!biometricFallbackConfig.enabled || !isBiometricUnavailable(error)) {
+      throw error;
+    }
+
+    await recordEvent("visitor_face_verify_failed", {
+      visitor_id,
+      is_match: false,
+      confidence_score: 0,
+      source: "backend_verify_fallback",
+      reason: "biometric_service_unavailable",
+      fallback_mode: biometricFallbackConfig.mode,
+    });
+
+    try {
+      await pool.query(
+        `INSERT INTO verification_logs (visitor_id, is_match, confidence_score, reason)
+         VALUES ($1, $2, $3, $4)`,
+        [visitor_id, false, 0, "biometric_service_unavailable"]
+      );
+    } catch {
+      // best-effort logging only in fallback path
+    }
+
+    res.status(200).json({
+      success: false,
+      visitor_id,
+      is_match: false,
+      confidence_score: 0,
+      message: "Biometric verification is temporarily unavailable. Proceed with manual review.",
+      fallback: {
+        active: true,
+        mode: biometricFallbackConfig.mode,
+        allow_qr_check_in: biometricFallbackConfig.mode === "allow_qr_check_in",
+        retry_after_seconds: biometricFallbackConfig.retryAfterSeconds,
+      },
+    });
+    return;
+  }
 
   await recordEvent(result?.is_match ? "visitor_face_verified" : "visitor_face_verify_failed", {
     visitor_id,
@@ -208,7 +292,7 @@ router.get("/info/:visitor_id", asyncHandler(async (req: Request, res: Response)
   if (Number.isNaN(visitor_id)) {
     throw new HttpError(400, "Valid visitor_id required");
   }
-  const result = await callBiometricService(`/info/${visitor_id}`, "GET");
+  const result = await callBiometricService(`/info/${visitor_id}`, "GET", undefined, (req.id as string));
   res.json(result);
 }));
 
@@ -224,7 +308,7 @@ router.delete(
     if (Number.isNaN(visitor_id)) {
       throw new HttpError(400, "Valid visitor_id required");
     }
-    const result = await callBiometricService(`/encoding/${visitor_id}`, "DELETE");
+    const result = await callBiometricService(`/encoding/${visitor_id}`, "DELETE", undefined, (req.id as string));
     res.json(result);
   })
 );
@@ -234,7 +318,7 @@ router.delete(
  * Get biometric service storage statistics (admin only)
  */
 router.get("/stats", requireAdmin, asyncHandler(async (_req: Request, res: Response) => {
-  const result = await callBiometricService("/stats", "GET");
+  const result = await callBiometricService("/stats", "GET", undefined, (_req.id as string));
   res.json(result);
 }));
 

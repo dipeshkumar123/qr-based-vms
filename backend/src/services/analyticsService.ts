@@ -21,6 +21,41 @@ const KNOWN_EVENTS = new Set([
 // In-memory fallback if table missing — bounded and logged
 const memoryEvents: { name: string; payload: any; createdAt: string }[] = [];
 const MAX_MEMORY_EVENTS = 500;
+const MAX_PAYLOAD_CHARS = 64_000;
+let dbInsertFailures = 0;
+let consecutiveDbFailures = 0;
+let memoryFallbackCount = 0;
+let memoryFlushRecovered = 0;
+let breakerOpen = false;
+
+function extractVisitorId(payload: any): number | null {
+  const raw = payload?.visitor_id;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === "string" && /^\d+$/.test(raw)) return Number(raw);
+  return null;
+}
+
+function normalizePayload(payload: any): any {
+  if (payload == null) return null;
+  if (typeof payload !== "object") {
+    return { value: String(payload).slice(0, 2000) };
+  }
+
+  const cloned = { ...payload } as Record<string, any>;
+  const visitorId = extractVisitorId(cloned);
+  if (visitorId != null) cloned.visitor_id = visitorId;
+  else if ("visitor_id" in cloned) delete cloned.visitor_id;
+
+  const serialized = JSON.stringify(cloned);
+  if (serialized.length > MAX_PAYLOAD_CHARS) {
+    return {
+      truncated: true,
+      original_size: serialized.length,
+      preview: serialized.slice(0, MAX_PAYLOAD_CHARS),
+    };
+  }
+  return cloned;
+}
 
 export async function recordEvent(name: string, payload: any): Promise<void> {
   // Warn on unknown event names (but still record them)
@@ -29,18 +64,41 @@ export async function recordEvent(name: string, payload: any): Promise<void> {
   }
 
   const createdAt = new Date().toISOString();
+  const sanitizedPayload = normalizePayload(payload);
+  const visitorId = extractVisitorId(sanitizedPayload);
   try {
-    // Pass payload directly as JSONB (no need to JSON.stringify for JSONB columns)
+    // Persist typed fields for fast querying while keeping raw payload as JSONB.
     await pool.query(
-      `INSERT INTO analytics_events (name, payload, created_at) VALUES ($1, $2::jsonb, NOW())`,
-      [name, payload != null ? JSON.stringify(payload) : null]
+      `INSERT INTO analytics_events (name, event_type, visitor_id, event_time, payload, created_at)
+       VALUES ($1, $2, $3, NOW(), $4::jsonb, NOW())`,
+      [name, name, visitorId, sanitizedPayload != null ? JSON.stringify(sanitizedPayload) : null]
     );
+    if (consecutiveDbFailures > 0) {
+      memoryFlushRecovered += 1;
+    }
+    consecutiveDbFailures = 0;
+    breakerOpen = false;
   } catch (e: any) {
+    dbInsertFailures += 1;
+    consecutiveDbFailures += 1;
+    memoryFallbackCount += 1;
+    breakerOpen = consecutiveDbFailures >= 3;
     // Fallback to memory store (likely table absent); keep bounded size
     logger.warn({ err: e, eventName: name }, "Analytics DB insert failed, falling back to memory store");
-    memoryEvents.push({ name, payload, createdAt });
+    memoryEvents.push({ name, payload: sanitizedPayload, createdAt });
     if (memoryEvents.length > MAX_MEMORY_EVENTS) memoryEvents.shift();
   }
+}
+
+export function getIngestHealth() {
+  return {
+    breakerOpen,
+    memoryBufferedEvents: memoryEvents.length,
+    consecutiveDbFailures,
+    dbInsertFailures,
+    memoryFallbackCount,
+    memoryFlushRecovered,
+  };
 }
 
 export async function listRecentEvents(limit = 100): Promise<{ name: string; payload: any; createdAt: string }[]> {

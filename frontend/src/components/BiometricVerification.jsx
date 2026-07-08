@@ -34,7 +34,9 @@ export default function BiometricVerification({
 
       setResult(response.data);
 
-      if (response.data.success && response.data.is_match) {
+      if (response.data.fallback?.active) {
+        onFailed?.(response.data);
+      } else if (response.data.success && response.data.is_match) {
         onVerified?.(response.data);
       } else {
         onFailed?.(response.data);
@@ -86,7 +88,18 @@ export default function BiometricVerification({
             </div>
           )}
 
-          {result.is_match ? (
+          {result.fallback?.active ? (
+            <div className="p-4 bg-sky-50 border border-sky-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-2xl">ℹ</span>
+                <h3 className="font-semibold text-sky-900">Biometric Service Unavailable</h3>
+              </div>
+              <p className="text-sky-800 text-sm">{result.message}</p>
+              <p className="text-sky-700 text-xs mt-1">
+                Suggested action: {result.fallback?.allow_qr_check_in ? 'Continue with QR check-in policy' : 'Require manual identity review'}.
+              </p>
+            </div>
+          ) : result.is_match ? (
             <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-2xl">✅</span>

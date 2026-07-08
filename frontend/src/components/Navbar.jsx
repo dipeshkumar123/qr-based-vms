@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import { Link, NavLink } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../store/authStore';
 
 export default function Navbar() {
@@ -20,12 +20,15 @@ export default function Navbar() {
 
   const visibleLinks = navLinks.filter(l => l.always || (l.admin && isAdmin));
 
+  useEffect(() => {
+    document.body.style.overflow = mobileMenuOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
+
   return (
-    <motion.nav 
-      initial={{ y: -100 }}
-      animate={{ y: 0 }}
-      className="bg-white/80 backdrop-blur-xl shadow-sm border-b border-gray-100/50 fixed w-full top-0 z-50"
-    >
+    <nav className="bg-white/80 backdrop-blur-xl shadow-sm border-b border-gray-100/50 fixed w-full top-0 z-50">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <Link to="/" className="flex items-center space-x-2.5">
@@ -39,7 +42,13 @@ export default function Navbar() {
           
           <div className="hidden md:flex items-center space-x-6">
             {visibleLinks.map(link => (
-              <Link key={link.to} to={link.to} className="text-gray-500 hover:text-gray-900 text-sm font-medium transition">{link.label}</Link>
+              <NavLink
+                key={link.to}
+                to={link.to}
+                className={({ isActive }) => `text-sm font-medium transition ${isActive ? 'text-blue-700' : 'text-gray-500 hover:text-gray-900'}`}
+              >
+                {link.label}
+              </NavLink>
             ))}
             {isAdmin ? (
               <button 
@@ -59,10 +68,16 @@ export default function Navbar() {
           </div>
 
           {/* Mobile menu button */}
-          <div className="md:hidden">
+          <div className="md:hidden flex items-center gap-2">
+            <NavLink
+              to="/register"
+              className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold active:scale-[0.98] transition"
+            >
+              Register
+            </NavLink>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="text-gray-700 p-2 rounded-md hover:bg-gray-100 transition"
+              className="text-gray-700 p-2.5 rounded-lg border border-gray-200 hover:bg-gray-100 transition"
               aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
               aria-expanded={mobileMenuOpen}
             >
@@ -81,27 +96,26 @@ export default function Navbar() {
       {/* Mobile menu dropdown */}
       <AnimatePresence>
         {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="md:hidden bg-white border-t border-gray-200 shadow-lg overflow-hidden"
-          >
-            <div className="px-4 py-3 space-y-2">
+          <div className="md:hidden bg-white border-t border-gray-200 shadow-xl overflow-hidden">
+            <div className="px-4 py-3 space-y-2 max-h-[70vh] overflow-y-auto">
               {visibleLinks.map(link => (
-                <Link
+                <NavLink
                   key={link.to}
                   to={link.to}
                   onClick={closeMobile}
-                  className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
+                  className={({ isActive }) => `block px-4 py-3 rounded-xl text-sm font-semibold transition active:scale-[0.99] ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-700 hover:bg-blue-50 hover:text-blue-600'
+                  }`}
                 >
                   {link.label}
-                </Link>
+                </NavLink>
               ))}
               {isAdmin ? (
                 <button
                   onClick={() => { logout(); closeMobile(); }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 transition"
+                  className="w-full text-left px-4 py-3 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 transition"
                 >
                   Logout
                 </button>
@@ -109,15 +123,15 @@ export default function Navbar() {
                 <Link
                   to="/admin/login"
                   onClick={closeMobile}
-                  className="block px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 text-white text-center"
+                  className="block px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-center text-sm font-semibold"
                 >
                   Admin Login
                 </Link>
               )}
             </div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
-    </motion.nav>
+    </nav>
   );
 }

@@ -31,7 +31,7 @@ export default function FaceVerifyModal({ isOpen, onClose, visitor }) {
         streamRef.current = stream;
         setCameraActive(true);
       }
-    } catch (err) {
+    } catch {
       setError('Failed to access camera. Please allow camera permissions.');
     }
   };

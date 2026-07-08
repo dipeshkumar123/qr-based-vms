@@ -25,9 +25,9 @@ RUN groupadd -r appgroup && useradd -r -g appgroup -d /app appuser && \
 USER appuser
 
 ENV PORT=8000
-EXPOSE 8000
+EXPOSE ${PORT}
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT}"]

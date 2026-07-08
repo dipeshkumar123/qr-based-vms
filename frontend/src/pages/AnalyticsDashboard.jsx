@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -15,7 +15,27 @@ import {
   Cell,
 } from 'recharts';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { apiClient as api } from '../lib/api';
+import { apiClient, getWithSWR } from '../lib/api';
+
+const ANALYTICS_SNAPSHOT_KEY = 'ii_vms_analytics_snapshot';
+
+function saveSnapshot(snapshot) {
+  try {
+    localStorage.setItem(ANALYTICS_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function loadSnapshot() {
+  try {
+    const raw = localStorage.getItem(ANALYTICS_SNAPSHOT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 const AnalyticsDashboard = () => {
   const [analytics, setAnalytics] = useState(null);
@@ -25,68 +45,116 @@ const AnalyticsDashboard = () => {
   const [trends, setTrends] = useState(null);
   const [statusDistribution, setStatusDistribution] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [partialErrors, setPartialErrors] = useState([]);
   const [days, setDays] = useState(30);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [cacheInfo, setCacheInfo] = useState(null);
+  const hasLoadedRef = useRef(false);
 
-  useEffect(() => {
-    fetchAnalytics();
-  }, [days]);
-
-  const fetchAnalytics = async () => {
+  const downloadTemplate = async (templateId) => {
     try {
-      setLoading(true);
-      setError(null);
-      setPartialErrors([]);
-
-      const errors = [];
-
-      const [reportRes, peakRes, frequentRes, suspiciousRes, trendsRes, statusRes] =
-        await Promise.all([
-          api.get(`/api/analytics/report?days=${days}`).catch((e) => {
-            errors.push('Report');
-            return { data: { summary: {} } };
-          }),
-          api.get(`/api/analytics/peak-hours?days=${days}`).catch((e) => {
-            errors.push('Peak hours');
-            return { data: { forecast: {}, peak_hours: [], error: null } };
-          }),
-          api.get(`/api/analytics/frequent-visitors?limit=10`).catch((e) => {
-            errors.push('Frequent visitors');
-            return { data: { visitors: [] } };
-          }),
-          api.get(`/api/analytics/suspicious-activity?threshold=0.05`).catch((e) => {
-            errors.push('Suspicious activity');
-            return { data: { suspicious_visitors: [] } };
-          }),
-          api.get(`/api/analytics/trends?days=${days}`).catch((e) => {
-            errors.push('Trends');
-            return { data: { trends: [] } };
-          }),
-          api.get('/api/analytics/status-distribution').catch((e) => {
-            errors.push('Status distribution');
-            return { data: { distribution: [] } };
-          }),
-        ]);
-
-      setAnalytics(reportRes.data || { summary: {} });
-      setPeakHours(peakRes.data || { forecast: {}, peak_hours: [], error: null });
-      setFrequentVisitors(frequentRes.data?.visitors || []);
-      setSuspiciousActivity(suspiciousRes.data || { suspicious_visitors: [] });
-      setTrends(Array.isArray(trendsRes.data?.trends) ? trendsRes.data.trends : []);
-      setStatusDistribution(statusRes.data?.distribution || []);
-      setPartialErrors(errors);
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.error('Analytics fetch error:', err);
-      setError('Failed to load analytics data. Please try again.');
-    } finally {
-      setLoading(false);
+      const response = await apiClient.get(`/api/admin/export-template/${templateId}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${templateId}-template.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download export template:', error);
     }
   };
 
-  if (loading) {
+  const applyPayload = (payload) => {
+    setAnalytics(payload.report || { summary: {} });
+    setPeakHours(payload.peakHours || { forecast: {}, peak_hours: [], error: null });
+    setFrequentVisitors(payload.frequentVisitors || []);
+    setSuspiciousActivity(payload.suspiciousActivity || { suspicious_visitors: [] });
+    setTrends(Array.isArray(payload.trends) ? payload.trends : []);
+    setStatusDistribution(Array.isArray(payload.statusDistribution) ? payload.statusDistribution : []);
+    setPartialErrors(Array.isArray(payload.partialErrors) ? payload.partialErrors : []);
+    setCacheInfo(payload.cache || null);
+    setLastUpdated(new Date());
+
+    saveSnapshot({
+      report: payload.report || { summary: {} },
+      peakHours: payload.peakHours || { forecast: {}, peak_hours: [], error: null },
+      frequentVisitors: payload.frequentVisitors || [],
+      suspiciousActivity: payload.suspiciousActivity || { suspicious_visitors: [] },
+      trends: Array.isArray(payload.trends) ? payload.trends : [],
+      statusDistribution: Array.isArray(payload.statusDistribution) ? payload.statusDistribution : [],
+      cache: payload.cache || null,
+      savedAt: new Date().toISOString(),
+    });
+  };
+
+  const fetchAnalytics = useCallback(async (forceNetwork = false) => {
+    const isInitialLoad = !hasLoadedRef.current;
+    try {
+      if (isInitialLoad) setLoading(true);
+      else setRefreshing(true);
+      setError(null);
+
+      const swr = await getWithSWR('/api/analytics/dashboard', {
+        params: { days },
+        ttlMs: 25_000,
+        staleMs: 5 * 60_000,
+        forceNetwork,
+        onUpdate: (fresh) => {
+          applyPayload(fresh || {});
+          setRefreshing(false);
+        },
+      });
+
+      const payload = swr?.data || {};
+      applyPayload(payload);
+      if (swr?.cache?.stale && !forceNetwork) {
+        setPartialErrors((prev) => {
+          const next = Array.isArray(prev) ? [...prev] : [];
+          if (!next.includes('Refreshing stale cache')) next.push('Refreshing stale cache');
+          return next;
+        });
+      }
+      hasLoadedRef.current = true;
+    } catch (err) {
+      console.error('Analytics fetch error:', err);
+      const snapshot = loadSnapshot();
+      if (snapshot) {
+        setAnalytics(snapshot.report || { summary: {} });
+        setPeakHours(snapshot.peakHours || { forecast: {}, peak_hours: [], error: null });
+        setFrequentVisitors(snapshot.frequentVisitors || []);
+        setSuspiciousActivity(snapshot.suspiciousActivity || { suspicious_visitors: [] });
+        setTrends(Array.isArray(snapshot.trends) ? snapshot.trends : []);
+        setStatusDistribution(Array.isArray(snapshot.statusDistribution) ? snapshot.statusDistribution : []);
+        setCacheInfo({ ...(snapshot.cache || {}), hit: true, stale: true, offline: true });
+        setPartialErrors((prev) => {
+          const next = Array.isArray(prev) ? [...prev] : [];
+          if (!next.includes('Offline snapshot')) next.push('Offline snapshot');
+          return next;
+        });
+        setError('Network issue detected. Showing last cached analytics snapshot.');
+      } else {
+        setError('Failed to load analytics data. Please try again.');
+      }
+      hasLoadedRef.current = true;
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [days]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
+
+  if (loading && !analytics) {
     return <LoadingSpinner />;
   }
 
@@ -123,13 +191,24 @@ const AnalyticsDashboard = () => {
                 Updated {lastUpdated.toLocaleTimeString()}
               </span>
             )}
+            {cacheInfo?.hit && (
+              <span className="text-xs text-amber-300">
+                {cacheInfo?.stale ? 'Stale cached data' : 'Cached snapshot'}
+              </span>
+            )}
             <button
-              onClick={fetchAnalytics}
-              disabled={loading}
+              onClick={() => downloadTemplate('analytics_summary')}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-sm font-semibold transition"
+            >
+              Export Template
+            </button>
+            <button
+              onClick={() => fetchAnalytics(true)}
+              disabled={loading || refreshing}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
             >
               <svg
-                className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+                className={`w-4 h-4 ${(loading || refreshing) ? 'animate-spin' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -141,10 +220,14 @@ const AnalyticsDashboard = () => {
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>
-              Refresh
+              {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
         </div>
+
+        {refreshing && (
+          <div className="mb-4 text-xs text-slate-400">Refreshing analytics in background...</div>
+        )}
 
         {/* Time Period Selector */}
         <div className="mb-8 flex flex-wrap gap-2">

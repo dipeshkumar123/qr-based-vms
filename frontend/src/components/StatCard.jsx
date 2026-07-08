@@ -1,13 +1,5 @@
 import { motion } from 'framer-motion';
 
-const gradients = {
-  blue:   'from-blue-500 to-indigo-600',
-  green:  'from-emerald-500 to-green-600',
-  yellow: 'from-amber-500 to-orange-600',
-  red:    'from-rose-500 to-red-600',
-  purple: 'from-violet-500 to-purple-600',
-};
-
 const bgs = {
   blue:   'bg-blue-50',
   green:  'bg-emerald-50',

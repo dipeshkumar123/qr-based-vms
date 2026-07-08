@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import type { AdminPayload } from "../types/express.js";
 import { authConfig, serverConfig } from "../config.js";
+import { ErrorCodes, sendApiError } from "../utils/errorCatalog.js";
 
 const COOKIE_NAME = "admin_token";
 
@@ -33,12 +34,22 @@ export function verifyAdminJwt(token: string): AdminPayload | null {
 export function requireAdminJwt(req: Request, res: Response, next: NextFunction): void {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) {
-    res.status(401).json({ message: "Unauthorized" });
+    sendApiError(res, {
+      status: 401,
+      message: "Unauthorized",
+      code: ErrorCodes.AUTH_UNAUTHORIZED,
+      requestId: (req.id as string),
+    });
     return;
   }
   const decoded = verifyAdminJwt(token);
   if (!decoded) {
-    res.status(401).json({ message: "Unauthorized" });
+    sendApiError(res, {
+      status: 401,
+      message: "Unauthorized",
+      code: ErrorCodes.AUTH_UNAUTHORIZED,
+      requestId: (req.id as string),
+    });
     return;
   }
   req.admin = decoded;

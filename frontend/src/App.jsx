@@ -21,8 +21,14 @@ function App() {
     <ErrorBoundary>
       <Router>
         <div className="flex flex-col min-h-screen">
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 z-[100] rounded-md bg-slate-900 text-white px-3 py-2 text-sm font-semibold"
+          >
+            Skip to main content
+          </a>
           <Navbar />
-          <main className="flex-grow">
+          <main id="main-content" tabIndex={-1} className="flex-grow">
             <Suspense fallback={<LoadingSpinner fullScreen />}>
               <Routes>
                 <Route path="/" element={<LandingPage />} />

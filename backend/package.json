@@ -10,7 +10,24 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "migrate": "node scripts/migrate.js",
+    "migration:smoke": "node scripts/migration_smoke_test.js",
+    "contract:analytics": "node scripts/contract_analytics_test.js",
+    "chaos:test": "node scripts/chaos_upstream_test.js",
+    "integration:test": "node scripts/integration_test.js",
+    "load:test": "node scripts/load_test.js",
+    "perf:check": "node scripts/performance_regression_check.js",
+    "ci:smoke": "npm run migrate; npm run migration:smoke",
+    "ci:chaos": "npm run chaos:test",
+    "ci:contract": "npm run contract:analytics",
+    "ci:integration": "npm run integration:test",
+    "ci:load": "npm run load:test",
+    "ci:perf": "npm run perf:check",
+    "ci:test": "npm run test",
+    "retention": "node scripts/retention.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -42,9 +59,13 @@
     "@types/node": "^20.11.32",
     "@types/nodemailer": "^7.0.4",
     "@types/pg": "^8.11.6",
+    "@types/supertest": "^7.2.0",
     "@types/uuid": "^9.0.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "pino-pretty": "^13.1.3",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.1",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.9"
   }
 }

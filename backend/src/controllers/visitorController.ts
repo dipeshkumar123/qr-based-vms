@@ -15,18 +15,38 @@ import {
   getVisitorStats,
   exportVisitorsCsv,
 } from "../services/visitorService.js";
+import { ErrorCodes, sendApiError } from "../utils/errorCatalog.js";
+
+function getRequestIp(req: Request): string | undefined {
+  const forwardedFor = req.header("x-forwarded-for");
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0]?.trim();
+  }
+  return req.ip || req.socket.remoteAddress || undefined;
+}
+
+function buildAuditContext(req: Request) {
+  const requestId = (req.id as string) === undefined || (req.id as string) === null ? undefined : String((req.id as string));
+  return {
+    actorType: req.admin?.role ? "admin" : "system",
+    actorId: req.admin?.sub,
+    requestId,
+    ipAddress: getRequestIp(req),
+    userAgent: req.header("user-agent") || undefined,
+  };
+}
 
 const createVisitorSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email(),
-  phone: z.string().min(10),
-  purpose: z.string().min(3),
-});
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(200),
+  phone: z.string().trim().regex(/^[+0-9()\-\s]{10,20}$/),
+  purpose: z.string().trim().min(3).max(500),
+}).strict();
 
 export async function handleCreateVisitor(req: Request, res: Response, next: NextFunction) {
   try {
     const parsed = createVisitorSchema.parse(req.body);
-    const visitor = await createVisitor(parsed);
+    const visitor = await createVisitor(parsed, buildAuditContext(req));
     res.status(201).json(visitor);
   } catch (error) {
     next(error);
@@ -36,9 +56,9 @@ export async function handleCreateVisitor(req: Request, res: Response, next: Nex
 const listVisitorsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  query: z.string().optional(),
+  query: z.string().trim().max(120).optional(),
   status: z.enum(["registered", "checked_in", "checked_out", "all"]).optional(),
-});
+}).strict();
 
 export async function handleListVisitors(req: Request, res: Response, next: NextFunction) {
   try {
@@ -54,12 +74,22 @@ export async function handleCheckIn(req: Request, res: Response, next: NextFunct
   try {
     const { token } = req.params;
     if (!token) {
-      return res.status(400).json({ message: "QR token is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "QR token is required",
+        code: ErrorCodes.VALIDATION_MISSING_QR_TOKEN,
+        requestId: (req.id as string),
+      });
     }
 
-    const visitor = await checkInVisitor(token);
+    const visitor = await checkInVisitor(token, buildAuditContext(req));
     if (!visitor) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
 
     res.json(visitor);
@@ -72,12 +102,22 @@ export async function handleCheckOut(req: Request, res: Response, next: NextFunc
   try {
     const { token } = req.params;
     if (!token) {
-      return res.status(400).json({ message: "QR token is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "QR token is required",
+        code: ErrorCodes.VALIDATION_MISSING_QR_TOKEN,
+        requestId: (req.id as string),
+      });
     }
 
-    const visitor = await checkOutVisitor(token);
+    const visitor = await checkOutVisitor(token, buildAuditContext(req));
     if (!visitor) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
 
     res.json(visitor);
@@ -90,12 +130,22 @@ export async function handleFindVisitor(req: Request, res: Response, next: NextF
   try {
     const { token } = req.params;
     if (!token) {
-      return res.status(400).json({ message: "QR token is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "QR token is required",
+        code: ErrorCodes.VALIDATION_MISSING_QR_TOKEN,
+        requestId: (req.id as string),
+      });
     }
 
     const visitor = await findVisitorByQrToken(token);
     if (!visitor) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
 
     res.json(visitor);
@@ -108,12 +158,22 @@ export async function handleDeleteVisitor(req: Request, res: Response, next: Nex
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
-      return res.status(400).json({ message: "Valid visitor id is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "Valid visitor id is required",
+        code: ErrorCodes.VALIDATION_INVALID_VISITOR_ID,
+        requestId: (req.id as string),
+      });
     }
 
-    const deleted = await deleteVisitor(id);
+    const deleted = await deleteVisitor(id, buildAuditContext(req));
     if (!deleted) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
     res.status(204).send();
   } catch (error) {
@@ -125,12 +185,22 @@ export async function handleGetVisitorById(req: Request, res: Response, next: Ne
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
-      return res.status(400).json({ message: "Valid visitor id is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "Valid visitor id is required",
+        code: ErrorCodes.VALIDATION_INVALID_VISITOR_ID,
+        requestId: (req.id as string),
+      });
     }
 
     const visitor = await findVisitorById(id);
     if (!visitor) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
     res.json(visitor);
   } catch (error) {
@@ -139,11 +209,11 @@ export async function handleGetVisitorById(req: Request, res: Response, next: Ne
 }
 
 const updateVisitorSchema = z.object({
-  name: z.string().min(2).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().min(10).optional(),
-  purpose: z.string().min(3).optional(),
-}).refine((data) => Object.keys(data).length > 0, {
+  name: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().email().max(200).optional(),
+  phone: z.string().trim().regex(/^[+0-9()\-\s]{10,20}$/).optional(),
+  purpose: z.string().trim().min(3).max(500).optional(),
+}).strict().refine((data) => Object.keys(data).length > 0, {
   message: "At least one field must be provided for update",
 });
 
@@ -151,13 +221,23 @@ export async function handleUpdateVisitor(req: Request, res: Response, next: Nex
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) {
-      return res.status(400).json({ message: "Valid visitor id is required" });
+      return sendApiError(res, {
+        status: 400,
+        message: "Valid visitor id is required",
+        code: ErrorCodes.VALIDATION_INVALID_VISITOR_ID,
+        requestId: (req.id as string),
+      });
     }
 
     const parsed = updateVisitorSchema.parse(req.body);
-    const visitor = await updateVisitor(id, parsed);
+    const visitor = await updateVisitor(id, parsed, buildAuditContext(req));
     if (!visitor) {
-      return res.status(404).json({ message: "Visitor not found" });
+      return sendApiError(res, {
+        status: 404,
+        message: "Visitor not found",
+        code: ErrorCodes.RESOURCE_NOT_FOUND,
+        requestId: (req.id as string),
+      });
     }
     res.json(visitor);
   } catch (error) {
@@ -168,12 +248,27 @@ export async function handleUpdateVisitor(req: Request, res: Response, next: Nex
 const listLedgerQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
-});
+  action: z.string().trim().min(2).max(80).optional(),
+  actorType: z.string().trim().min(2).max(40).optional(),
+  actorId: z.string().trim().min(1).max(120).optional(),
+  outcome: z.string().trim().min(2).max(40).optional(),
+  visitorId: z.coerce.number().int().min(1).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+}).strict();
 
 export async function handleListLedger(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit } = listLedgerQuerySchema.parse(req.query);
-    const ledger = await getLedger(page, limit);
+    const { page, limit, action, actorType, actorId, outcome, visitorId, from, to } = listLedgerQuerySchema.parse(req.query);
+    const ledger = await getLedger(page, limit, {
+      action,
+      actorType,
+      actorId,
+      outcome,
+      visitorId,
+      from,
+      to,
+    });
     res.json(ledger);
   } catch (error) {
     next(error);
@@ -209,7 +304,7 @@ export async function handleVisitorStats(_req: Request, res: Response, next: Nex
 
 const exportQuerySchema = z.object({
   status: z.enum(["registered", "checked_in", "checked_out", "all"]).optional(),
-});
+}).strict();
 
 export async function handleExportCsv(req: Request, res: Response, next: NextFunction) {
   try {

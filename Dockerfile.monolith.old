@@ -54,6 +54,12 @@ RUN mkdir -p /app/biometric-service/uploads
 # Expose service ports
 EXPOSE 5432 4000 5000 5173
 
+# Health check for primary app services in the single-container setup
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://localhost:4000/health >/dev/null && \
+            curl -fsS http://localhost:5000/health >/dev/null && \
+            curl -fsS http://localhost:5173 >/dev/null || exit 1
+
 # Default environment variables (can be overridden at runtime)
 ENV POSTGRES_USER=postgres \
     POSTGRES_PASSWORD=postgres \

@@ -6,6 +6,7 @@ import apiClient from '../lib/api';
 import Modal from '../components/Modal';
 import QRScanner from '../components/QRScanner';
 import BiometricVerification from '../components/BiometricVerification';
+import VirtualizedList from '../components/VirtualizedList';
 
 /* ─── Toast notification component ─── */
 function Toast({ message, type, onClose }) {
@@ -37,6 +38,8 @@ function Toast({ message, type, onClose }) {
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -12 }}
+      role={type === 'error' ? 'alert' : 'status'}
+      aria-live={type === 'error' ? 'assertive' : 'polite'}
       className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium shadow-sm ${colors[type] || colors.error}`}
     >
       {icons[type]}
@@ -108,6 +111,91 @@ const statCards = [
   },
 ];
 
+const DEFAULT_ALERT_THRESHOLDS = {
+  registrationBacklogRatio: 0.35,
+  lowTodayCheckInRate: 0.6,
+  activePopulationGap: 8,
+};
+
+function buildInsights(stats, thresholds) {
+  const total = Number(stats?.total || 0);
+  const registered = Number(stats?.registered || 0);
+  const checkedIn = Number(stats?.checkedIn || 0);
+  const checkedOut = Number(stats?.checkedOut || 0);
+  const todayTotal = Number(stats?.todayTotal || 0);
+  const todayCheckedIn = Number(stats?.todayCheckedIn || 0);
+
+  const registrationBacklogRatio = Number(
+    thresholds?.registrationBacklogRatio ?? DEFAULT_ALERT_THRESHOLDS.registrationBacklogRatio
+  );
+  const lowTodayCheckInRate = Number(
+    thresholds?.lowTodayCheckInRate ?? DEFAULT_ALERT_THRESHOLDS.lowTodayCheckInRate
+  );
+  const activePopulationGap = Number(
+    thresholds?.activePopulationGap ?? DEFAULT_ALERT_THRESHOLDS.activePopulationGap
+  );
+
+  const insights = [];
+
+  if (total === 0) {
+    insights.push({
+      key: 'empty',
+      severity: 'info',
+      title: 'No visitor activity yet',
+      detail: 'The system has no registered visitors at the moment.',
+      action: 'Start by creating the first visitor registration and validating check-in flow.',
+    });
+    return insights;
+  }
+
+  const registeredRatio = registered / Math.max(total, 1);
+  if (registeredRatio >= registrationBacklogRatio) {
+    insights.push({
+      key: 'registration-backlog',
+      severity: 'warning',
+      title: 'Registration backlog is building',
+      detail: `${registered} of ${total} visitors are still in registered state.`,
+      action: 'Prioritize QR scanning for queued visitors or assign a check-in desk during peak windows.',
+    });
+  }
+
+  if (todayTotal >= 5) {
+    const todayConversion = todayCheckedIn / Math.max(todayTotal, 1);
+    if (todayConversion < lowTodayCheckInRate) {
+      insights.push({
+        key: 'today-conversion',
+        severity: 'warning',
+        title: 'Today check-in conversion is low',
+        detail: `${todayCheckedIn}/${todayTotal} visitors checked in today (${Math.round(todayConversion * 100)}%).`,
+        action: 'Verify entry points are directing visitors to scan immediately after registration.',
+      });
+    }
+  }
+
+  const activeGap = checkedIn - checkedOut;
+  if (activeGap >= activePopulationGap) {
+    insights.push({
+      key: 'active-gap',
+      severity: 'info',
+      title: 'Large active on-site population',
+      detail: `${checkedIn} currently checked in vs ${checkedOut} checked out records.`,
+      action: 'Run periodic checkout reminders to keep occupancy and security logs current.',
+    });
+  }
+
+  if (insights.length === 0) {
+    insights.push({
+      key: 'healthy',
+      severity: 'success',
+      title: 'Flow health looks stable',
+      detail: 'Registration, check-in, and checkout numbers are currently balanced.',
+      action: 'Keep current staffing pattern and continue monitoring the next high-traffic period.',
+    });
+  }
+
+  return insights;
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { isAdmin, logout } = useAuthStore();
@@ -122,6 +210,8 @@ export default function AdminDashboard() {
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerLimit, setLedgerLimit] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasLoadedRef = useRef(false);
   const [activeTab, setActiveTab] = useState('visitors');
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -133,6 +223,10 @@ export default function AdminDashboard() {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [selectedVisitor, setSelectedVisitor] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState({ open: false, id: null, name: '' });
+  const [alertThresholds, setAlertThresholds] = useState(DEFAULT_ALERT_THRESHOLDS);
+  const [savingThresholds, setSavingThresholds] = useState(false);
+  const [thresholdStatus, setThresholdStatus] = useState('');
+  const insights = buildInsights(stats, alertThresholds);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -152,17 +246,21 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    setLoading(true);
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, limit, debouncedSearch, ledgerPage, ledgerLimit]);
 
   const fetchData = async () => {
+    const isInitialLoad = !hasLoadedRef.current;
+    if (isInitialLoad) setLoading(true);
+    else setRefreshing(true);
+
     try {
-      const [visitorsRes, ledgerRes, statsRes] = await Promise.all([
+      const [visitorsRes, ledgerRes, statsRes, thresholdsRes] = await Promise.all([
         apiClient.get('/api/visitors', { params: { page, limit, query: debouncedSearch || undefined } }),
         apiClient.get('/api/ledger', { params: { page: ledgerPage, limit: ledgerLimit } }),
-        apiClient.get('/api/visitors/stats')
+        apiClient.get('/api/visitors/stats'),
+        apiClient.get('/api/admin/alert-thresholds').catch(() => ({ data: { thresholds: DEFAULT_ALERT_THRESHOLDS } })),
       ]);
 
       const visitorsWithBiometric = await Promise.all(
@@ -185,6 +283,8 @@ export default function AdminDashboard() {
       setLedger(ledgerRes.data.items || []);
       setLedgerTotal(ledgerRes.data.total || 0);
       setStats(statsRes.data);
+      setAlertThresholds(thresholdsRes.data?.thresholds || DEFAULT_ALERT_THRESHOLDS);
+      hasLoadedRef.current = true;
     } catch (error) {
       console.error('Failed to fetch data:', error);
       if (error.response?.status === 401) {
@@ -193,6 +293,7 @@ export default function AdminDashboard() {
       }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -233,6 +334,34 @@ export default function AdminDashboard() {
       console.error('Delete failed:', error);
       showToast('error', error.response?.data?.message || 'Failed to delete visitor.');
       setConfirmDelete({ open: false, id: null, name: '' });
+    }
+  };
+
+  const updateThresholdField = (field, value) => {
+    setAlertThresholds((prev) => ({
+      ...prev,
+      [field]: field === 'activePopulationGap' ? Number(value || 0) : Number(value || 0),
+    }));
+  };
+
+  const saveThresholds = async () => {
+    try {
+      setSavingThresholds(true);
+      setThresholdStatus('');
+      const payload = {
+        registrationBacklogRatio: Number(alertThresholds.registrationBacklogRatio),
+        lowTodayCheckInRate: Number(alertThresholds.lowTodayCheckInRate),
+        activePopulationGap: Math.round(Number(alertThresholds.activePopulationGap)),
+      };
+      const response = await apiClient.put('/api/admin/alert-thresholds', payload);
+      setAlertThresholds(response.data?.thresholds || payload);
+      setThresholdStatus('Thresholds saved');
+      setTimeout(() => setThresholdStatus(''), 2500);
+    } catch (error) {
+      const message = error?.response?.data?.message || 'Failed to save thresholds';
+      setThresholdStatus(message);
+    } finally {
+      setSavingThresholds(false);
     }
   };
 
@@ -307,6 +436,13 @@ export default function AdminDashboard() {
   };
 
   const handleVerificationFailure = (payload) => {
+    if (payload?.fallback?.active) {
+      setVerificationMessage({ type: 'warning', text: `⚠️ ${payload?.message || 'Biometric service unavailable. Use manual review policy.'}` });
+      closeVerificationModal();
+      setTimeout(() => setVerificationMessage({ type: '', text: '' }), 6000);
+      return;
+    }
+
     const message = payload?.message || payload?.error || 'Verification failed. Please try again.';
     setVerificationMessage({ type: 'error', text: `❌ ${message}` });
     closeVerificationModal();
@@ -315,12 +451,28 @@ export default function AdminDashboard() {
 
   const filteredVisitors = visitors; // server-side filtering
 
-  if (loading) {
+  if (loading && !hasLoadedRef.current) {
     return (
-      <div className="min-h-screen pt-32 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
+      <div className="min-h-screen pt-24 pb-20 px-4 bg-gray-50">
+        <div className="container mx-auto animate-pulse">
+          <div className="h-8 w-56 bg-gray-200 rounded mb-2"></div>
+          <div className="h-4 w-80 bg-gray-200 rounded mb-8"></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-5">
+                <div className="h-4 w-24 bg-gray-200 rounded mb-4"></div>
+                <div className="h-8 w-16 bg-gray-200 rounded"></div>
+              </div>
+            ))}
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-6">
+            <div className="h-10 w-full bg-gray-100 rounded-xl mb-5"></div>
+            <div className="space-y-3">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="h-16 w-full bg-gray-100 rounded-xl"></div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -378,6 +530,12 @@ export default function AdminDashboard() {
             )}
           </AnimatePresence>
 
+          {refreshing && (
+            <div className="mb-4 text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+              Refreshing data in background. Showing last known results.
+            </div>
+          )}
+
           {/* Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
             {statCards.map((card) => (
@@ -397,6 +555,89 @@ export default function AdminDashboard() {
                 <p className="text-2xl sm:text-3xl font-extrabold text-gray-900 stat-number">{stats[card.key]}</p>
               </motion.div>
             ))}
+          </div>
+
+          <div className="mb-8 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 p-5 sm:p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900">Insights Summary</h2>
+                <p className="text-sm text-slate-600">Actionable recommendations generated from current visitor flow.</p>
+              </div>
+              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-700">
+                {insights.length} active signal{insights.length > 1 ? 's' : ''}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {insights.map((item) => {
+                const tone =
+                  item.severity === 'warning'
+                    ? 'border-amber-200 bg-amber-50/70'
+                    : item.severity === 'success'
+                    ? 'border-emerald-200 bg-emerald-50/70'
+                    : 'border-sky-200 bg-sky-50/70';
+
+                return (
+                  <div key={item.key} className={`rounded-xl border p-4 ${tone}`}>
+                    <p className="font-semibold text-slate-900 text-sm mb-1">{item.title}</p>
+                    <p className="text-xs text-slate-700 mb-2">{item.detail}</p>
+                    <p className="text-xs font-medium text-slate-800">Recommended action: {item.action}</p>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 pt-5 border-t border-indigo-100">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Alert Threshold Configuration</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label className="text-xs text-slate-700">
+                  Registration backlog ratio
+                  <input
+                    type="number"
+                    min="0.05"
+                    max="0.95"
+                    step="0.01"
+                    value={alertThresholds.registrationBacklogRatio}
+                    onChange={(e) => updateThresholdField('registrationBacklogRatio', e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs text-slate-700">
+                  Low today check-in rate
+                  <input
+                    type="number"
+                    min="0.05"
+                    max="0.95"
+                    step="0.01"
+                    value={alertThresholds.lowTodayCheckInRate}
+                    onChange={(e) => updateThresholdField('lowTodayCheckInRate', e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs text-slate-700">
+                  Active population gap
+                  <input
+                    type="number"
+                    min="1"
+                    max="200"
+                    step="1"
+                    value={alertThresholds.activePopulationGap}
+                    onChange={(e) => updateThresholdField('activePopulationGap', e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={saveThresholds}
+                  disabled={savingThresholds}
+                  className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {savingThresholds ? 'Saving...' : 'Save Thresholds'}
+                </button>
+                {thresholdStatus && <span className="text-xs text-slate-700">{thresholdStatus}</span>}
+              </div>
+            </div>
           </div>
 
           {/* Tabs */}
@@ -560,8 +801,13 @@ export default function AdminDashboard() {
                           </table>
                         </div>
 
-                        <div className="md:hidden space-y-3">
-                          {filteredVisitors.map((visitor) => {
+                        <div className="md:hidden">
+                          <VirtualizedList
+                            items={filteredVisitors}
+                            itemHeight={210}
+                            height={Math.min(620, Math.max(260, filteredVisitors.length * 210))}
+                            className="space-y-3"
+                            renderItem={(visitor) => {
                             const isVerified = Boolean(visitor.biometricVerified);
                             const canVerify = Boolean(visitor.biometricEnrolled) && !isVerified;
                             return (
@@ -637,7 +883,8 @@ export default function AdminDashboard() {
                                 </div>
                               </div>
                             );
-                          })}
+                            }}
+                          />
                         </div>
                       </>
                     )}
@@ -697,8 +944,13 @@ export default function AdminDashboard() {
                         </table>
                       </div>
 
-                      <div className="md:hidden space-y-3">
-                        {ledger.map((entry, idx) => (
+                      <div className="md:hidden">
+                        <VirtualizedList
+                          items={ledger}
+                          itemHeight={170}
+                          height={Math.min(620, Math.max(220, ledger.length * 170))}
+                          className="space-y-3"
+                          renderItem={(entry, idx) => (
                           <div key={idx} className="rounded-xl border border-gray-100 p-4 bg-white shadow-sm">
                             <p className="text-sm text-gray-500 mb-1">Visitor ID</p>
                             <p className="font-semibold text-gray-900 mb-2">{entry.visitorId}</p>
@@ -707,7 +959,8 @@ export default function AdminDashboard() {
                             <p className="text-sm text-gray-500 mb-1">Timestamp</p>
                             <p className="text-sm text-gray-700">{new Date(entry.createdAt).toLocaleString()}</p>
                           </div>
-                        ))}
+                          )}
+                        />
                       </div>
 
                       <div className="flex flex-col sm:flex-row items-center justify-between mt-6 gap-4">

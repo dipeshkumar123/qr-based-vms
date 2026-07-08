@@ -200,6 +200,11 @@ cp backend/.env.example backend/.env
 # - ADMIN_JWT_SECRET (random string)
 ```
 
+Production secret guidance:
+- Use randomly generated values for `ADMIN_API_KEY`, `ADMIN_JWT_SECRET`, and `SERVICE_API_KEY`.
+- Prefer file-backed secrets in production via `*_FILE` variables (for Docker/Kubernetes secret mounts), for example `ADMIN_JWT_SECRET_FILE=/run/secrets/admin_jwt_secret`.
+- The backend now performs secret hygiene checks and will refuse startup in production when placeholder or weak secrets are detected.
+
 **5. Start Backend Server**
 ```bash
 cd backend
