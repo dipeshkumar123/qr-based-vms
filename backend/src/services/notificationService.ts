@@ -154,15 +154,17 @@ export async function notifyVisitorArrival(visitor: {
   phone: string;
   purpose: string;
 }): Promise<void> {
-  const adminEmail = notificationConfig.adminEmail;
-  const adminPhone = notificationConfig.adminPhone;
+  // Fire-and-forget notification - never block registration
+  try {
+    const adminEmail = notificationConfig.adminEmail;
+    const adminPhone = notificationConfig.adminPhone;
 
-  if (!adminEmail && !adminPhone) {
-    logger.warn('Admin contact not configured for notifications');
-    return;
-  }
+    if (!adminEmail && !adminPhone) {
+      logger.warn('Admin contact not configured for notifications');
+      return;
+    }
 
-  const message = `
+    const message = `
     <p><strong>New Visitor Arrival</strong></p>
     <ul>
       <li><strong>Name:</strong> ${escapeHtml(visitor.name)}</li>
@@ -174,21 +176,21 @@ export async function notifyVisitorArrival(visitor: {
     <p>Please review and take necessary action.</p>
   `;
 
-  // Send email to admin
-  if (adminEmail) {
-    await sendEmailNotification(adminEmail, '🔔 New Visitor Arrival', message);
-  }
+    // Send email to admin
+    if (adminEmail) {
+      await sendEmailNotification(adminEmail, '🔔 New Visitor Arrival', message);
+    }
 
-  // Send SMS to admin (optional)
-  if (adminPhone && notificationConfig.enableSmsAlerts) {
-    await sendSMSNotification(
-      adminPhone,
-      `New visitor: ${visitor.name} arrived for ${visitor.purpose}`
-    );
-  }
+    // Send SMS to admin (optional)
+    if (adminPhone && notificationConfig.enableSmsAlerts) {
+      await sendSMSNotification(
+        adminPhone,
+        `New visitor: ${visitor.name} arrived for ${visitor.purpose}`
+      );
+    }
 
-  // Send welcome email to visitor
-  const welcomeMessage = `
+    // Send welcome email to visitor
+    const welcomeMessage = `
     <p>Dear ${escapeHtml(visitor.name)},</p>
     <p>Thank you for registering at our facility. Your visit has been recorded.</p>
     <ul>
@@ -199,7 +201,11 @@ export async function notifyVisitorArrival(visitor: {
     <p>Have a great visit!</p>
   `;
 
-  await sendEmailNotification(visitor.email, '✅ Registration Confirmed - II-VMS', welcomeMessage);
+    await sendEmailNotification(visitor.email, '✅ Registration Confirmed - II-VMS', welcomeMessage);
+  } catch (err) {
+    // Log but don't throw - registration must succeed even if notification fails
+    logger.error({ err, visitor: visitor.email }, "Notification failed (non-blocking)");
+  }
 }
 
 /**

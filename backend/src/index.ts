@@ -113,7 +113,16 @@ async function bootstrap() {
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
-      // Create tables (idempotent) - include hash column
+      // Ensure audit_ledger has hash column (may be missing from old migration)
+      const auditCols = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'audit_ledger'`
+      );
+      const colNames = auditCols.rows.map((r: any) => r.column_name);
+      if (!colNames.includes('hash')) {
+        await pool.query(`ALTER TABLE audit_ledger ADD COLUMN IF NOT EXISTS hash TEXT;`);
+      }
+
+      // Create tables if missing
       await pool.query(`CREATE TABLE IF NOT EXISTS visitors (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -144,9 +153,6 @@ async function bootstrap() {
         payload JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_status ON visitors(status);`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_created_at ON visitors(created_at DESC);`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_ledger_visitor ON audit_ledger(visitor_id, created_at DESC);`);
       res.json({ message: "Migration completed successfully" });
     } catch (error: any) {
       logger.error({ err: error }, "Migration failed");
