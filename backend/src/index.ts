@@ -19,7 +19,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import biometricRoutes from "./routes/biometricRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import { logger } from "./utils/logger.js";
-import { serverConfig } from "./config.js";
+import { serverConfig, authConfig } from "./config.js";
 import type { IncomingMessage } from "http";
 
 async function bootstrap() {
@@ -92,7 +92,7 @@ async function bootstrap() {
   });
   app.use("/api/admin/login", loginLimiter);
 
-  if (!serverConfig.isProd && !process.env.ADMIN_API_KEY) {
+  if (!serverConfig.isProd && !authConfig.adminApiKey) {
     logger.warn("ADMIN_API_KEY is not set; admin endpoints will be disabled.");
   }
 
@@ -107,6 +107,56 @@ async function bootstrap() {
       res.json({ status: "ready" });
     } catch {
       res.status(503).json({ status: "degraded" });
+    }
+  });
+
+  // ── Migration endpoint (for Render free tier - no shell access) ───────
+  app.get("/migrate", async (_req, res) => {
+    try {
+      // Run migrations inline
+      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;`);
+      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS checked_out_at TIMESTAMPTZ;`);
+      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS biometric_verified BOOLEAN NOT NULL DEFAULT FALSE;`);
+      await pool.query(`ALTER TABLE IF NOT EXISTS visitors ADD COLUMN IF NOT EXISTS biometric_verified_at TIMESTAMPTZ;`);
+      await pool.query(`ALTER TABLE IF NOT EXISTS audit_ledger ADD COLUMN IF NOT EXISTS prev_hash TEXT;`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS analytics_events (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          payload JSONB,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await pool.query(`CREATE TABLE IF NOT EXISTS audit_ledger (
+        id SERIAL PRIMARY KEY,
+        visitor_id INTEGER REFERENCES visitors(id),
+        action TEXT NOT NULL,
+        details JSONB,
+        prev_hash TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS visitors (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        purpose TEXT,
+        status TEXT NOT NULL DEFAULT 'registered',
+        qr_token UUID NOT NULL,
+        checked_in_at TIMESTAMPTZ,
+        checked_out_at TIMESTAMPTZ,
+        biometric_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        biometric_verified_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_status ON visitors(status);`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_visitors_created_at ON visitors(created_at DESC);`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_ledger_visitor ON audit_ledger(visitor_id, created_at DESC);`);
+      res.json({ message: "Migration completed successfully" });
+    } catch (error: any) {
+      logger.error({ err: error }, "Migration failed");
+      res.status(500).json({ message: "Migration failed", error: error.message });
     }
   });
 
