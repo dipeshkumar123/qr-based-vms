@@ -74,3 +74,14 @@ export const notificationConfig = {
   adminPhone: process.env.ADMIN_PHONE || "",
   enableSmsAlerts: process.env.ENABLE_SMS_ALERTS === "true",
 } as const;
+
+/** Analytics reliability monitoring configuration */
+export const analyticsReliabilityConfig = {
+  enabled: (process.env.ANALYTICS_RELIABILITY_ENABLED ?? "false").toLowerCase() === "true",
+  pollIntervalMs: Number(process.env.ANALYTICS_RELIABILITY_POLL_INTERVAL_MS ?? 30000),
+  bufferAlertThreshold: Number(process.env.ANALYTICS_BUFFER_ALERT_THRESHOLD ?? 1000),
+  failureAlertThreshold: Number(process.env.ANALYTICS_FAILURE_ALERT_THRESHOLD ?? 5),
+  degradedChecksToAlert: Number(process.env.ANALYTICS_DEGRADED_CHECKS_TO_ALERT ?? 3),
+  healthyChecksToRecover: Number(process.env.ANALYTICS_HEALTHY_CHECKS_TO_RECOVER ?? 3),
+  alertCooldownMs: Number(process.env.ANALYTICS_ALERT_COOLDOWN_MS ?? 3600000),
+} as const;

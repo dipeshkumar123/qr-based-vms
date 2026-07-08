@@ -22,6 +22,14 @@ const KNOWN_EVENTS = new Set([
 const memoryEvents: { name: string; payload: any; createdAt: string }[] = [];
 const MAX_MEMORY_EVENTS = 500;
 
+// Health tracking for analytics ingestion
+let memoryBufferedEvents = 0;
+let consecutiveDbFailures = 0;
+let dbInsertFailures = 0;
+let memoryFallbackCount = 0;
+let memoryFlushRecovered = 0;
+let breakerOpen = false;
+
 export async function recordEvent(name: string, payload: any): Promise<void> {
   // Warn on unknown event names (but still record them)
   if (!KNOWN_EVENTS.has(name)) {
@@ -35,11 +43,21 @@ export async function recordEvent(name: string, payload: any): Promise<void> {
       `INSERT INTO analytics_events (name, payload, created_at) VALUES ($1, $2::jsonb, NOW())`,
       [name, payload != null ? JSON.stringify(payload) : null]
     );
+    consecutiveDbFailures = 0;
+    memoryFlushRecovered++;
   } catch (e: any) {
+    consecutiveDbFailures++;
+    dbInsertFailures++;
     // Fallback to memory store (likely table absent); keep bounded size
     logger.warn({ err: e, eventName: name }, "Analytics DB insert failed, falling back to memory store");
     memoryEvents.push({ name, payload, createdAt });
-    if (memoryEvents.length > MAX_MEMORY_EVENTS) memoryEvents.shift();
+    if (memoryEvents.length > MAX_MEMORY_EVENTS) {
+      memoryEvents.shift();
+      memoryFallbackCount++;
+    }
+    if (memoryEvents.length > 0) {
+      memoryBufferedEvents = memoryEvents.length;
+    }
   }
 }
 
@@ -82,4 +100,30 @@ export async function getEventCounts(days = 30): Promise<Record<string, number>>
     }
     return counts;
   }
+}
+
+/**
+ * Get current health state of analytics ingestion.
+ * Used by analyticsAlertService for reliability monitoring.
+ */
+export function getIngestHealth(): {
+  breakerOpen: boolean;
+  memoryBufferedEvents: number;
+  consecutiveDbFailures: number;
+  dbInsertFailures: number;
+  memoryFallbackCount: number;
+  memoryFlushRecovered: number;
+} {
+  return {
+    breakerOpen,
+    memoryBufferedEvents,
+    consecutiveDbFailures,
+    dbInsertFailures,
+    memoryFallbackCount,
+    memoryFlushRecovered,
+  };
+}
+
+export function setBreakerOpen(open: boolean): void {
+  breakerOpen = open;
 }
