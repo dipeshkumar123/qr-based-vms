@@ -110,6 +110,28 @@ async function bootstrap() {
     }
   });
 
+  // ── Diagnostic endpoint ───────────────────────────────────────────────
+  app.get("/db-check", async (_req, res) => {
+    try {
+      const tables = await pool.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`
+      );
+      const visitorsCols = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'visitors'`
+      );
+      const auditCols = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'audit_ledger'`
+      );
+      res.json({
+        tables: tables.rows.map((r: any) => r.tablename),
+        visitorsColumns: visitorsCols.rows.map((r: any) => r.column_name),
+        auditColumns: auditCols.rows.map((r: any) => r.column_name),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
