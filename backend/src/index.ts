@@ -135,13 +135,19 @@ async function bootstrap() {
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
-      // Ensure audit_ledger has hash column (may be missing from old migration)
+      // Fixup: drop columns that were mistakenly added by earlier migration
       const auditCols = await pool.query(
         `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'audit_ledger'`
       );
       const colNames = auditCols.rows.map((r: any) => r.column_name);
       if (!colNames.includes('hash')) {
         await pool.query(`ALTER TABLE audit_ledger ADD COLUMN IF NOT EXISTS hash TEXT;`);
+      }
+      if (colNames.includes('action')) {
+        await pool.query(`ALTER TABLE audit_ledger DROP COLUMN IF EXISTS action;`);
+      }
+      if (colNames.includes('details')) {
+        await pool.query(`ALTER TABLE audit_ledger DROP COLUMN IF EXISTS details;`);
       }
 
       // Create tables if missing
