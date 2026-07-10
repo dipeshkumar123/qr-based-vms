@@ -132,6 +132,17 @@ async function bootstrap() {
     }
   });
 
+  // ── Fix database schema (drop columns that should not exist) ─────────
+  app.get("/fix-db", async (_req, res) => {
+    try {
+      await pool.query(`ALTER TABLE audit_ledger DROP COLUMN IF EXISTS action;`);
+      await pool.query(`ALTER TABLE audit_ledger DROP COLUMN IF EXISTS details;`);
+      res.json({ message: "Database schema fixed" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ── Migration endpoint (for Render free tier - no shell access) ───────
   app.get("/migrate", async (_req, res) => {
     try {
