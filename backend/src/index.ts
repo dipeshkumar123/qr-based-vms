@@ -162,10 +162,8 @@ async function bootstrap() {
       );`);
       await pool.query(`CREATE TABLE IF NOT EXISTS audit_ledger (
         id SERIAL PRIMARY KEY,
-        visitor_id INTEGER REFERENCES visitors(id),
+        visitor_id INTEGER NOT NULL REFERENCES visitors(id) ON DELETE RESTRICT,
         hash TEXT NOT NULL,
-        action TEXT NOT NULL,
-        details JSONB,
         prev_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );`);
