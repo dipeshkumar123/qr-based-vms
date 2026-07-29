@@ -1,13 +1,17 @@
-# Render Blueprint for II-VMS (Backend + PostgreSQL)
-# For Render: Connect repo and select "Blueprint" deployment
-# This will create the backend service and PostgreSQL database
+# Render Blueprint for II-VMS
+# Deploys: PostgreSQL + Backend + Biometrics + Analytics
+# Connect repo → "New +" → "Blueprint" → select repo
+
+databases:
+  - name: ii-vms-db
+    plan: free
 
 services:
+  # ── Backend (Node.js/Express) ──────────────────────────────────
   - type: web
     name: ii-vms-backend
     runtime: docker
     plan: free
-    # Render looks for Dockerfile automatically; override to use backend/Dockerfile
     dockerfilePath: ./Dockerfile
     dockerContext: .
     envVars:
@@ -37,11 +41,49 @@ services:
         value: /tmp/uploads
       - key: LOG_LEVEL
         value: info
-      - key: ENABLE_RATE_LIMITING
-        value: true
-      - key: SECURE_COOKIES
-        value: true
 
-databases:
-  - name: ii-vms-db
+  # ── Biometrics (Python/FastAPI - face recognition) ─────────────
+  - type: web
+    name: ii-vms-biometrics
+    runtime: docker
     plan: free
+    dockerfilePath: ./biometrics/Dockerfile
+    dockerContext: ./biometrics
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: STORAGE_DIR
+        value: /var/data
+      - key: FACE_MATCH_TOLERANCE
+        value: "0.6"
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.70"
+      - key: BACKEND_URL
+        value: https://ii-vms-backend.onrender.com
+      - key: SERVICE_API_KEY
+        fromService:
+          type: web
+          name: ii-vms-backend
+          envVarKey: SERVICE_API_KEY
+
+  # ── Analytics (Python/FastAPI - ML insights) ───────────────────
+  - type: web
+    name: ii-vms-analytics
+    runtime: docker
+    plan: free
+    dockerfilePath: ./biometrics/Dockerfile.analytics
+    dockerContext: ./biometrics
+    envVars:
+      - key: PORT
+        value: 8001
+      - key: ANALYTICS_PORT
+        value: 8001
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ii-vms-db
+          property: connectionString
+      - key: SERVICE_API_KEY
+        fromService:
+          type: web
+          name: ii-vms-backend
+          envVarKey: SERVICE_API_KEY

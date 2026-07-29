@@ -28,11 +28,23 @@ logging.basicConfig(
 logger = logging.getLogger("analytics-engine")
 
 # ── Database config ─────────────────────────────────────────────────
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
-DB_NAME = os.getenv("POSTGRES_DB", "ii_vms")
+# Parse DATABASE_URL first (preferred), fall back to individual vars
+_DATABASE_URL = os.getenv("DATABASE_URL", "")
+if _DATABASE_URL:
+    # postgresql://user:password@host:port/dbname
+    from urllib.parse import urlparse
+    _parsed = urlparse(_DATABASE_URL)
+    DB_HOST = _parsed.hostname or "localhost"
+    DB_PORT = str(_parsed.port or 5432)
+    DB_USER = _parsed.username or "postgres"
+    DB_PASSWORD = _parsed.password or "postgres"
+    DB_NAME = _parsed.path.lstrip("/") if _parsed.path else "ii_vms"
+else:
+    DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
+    DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+    DB_USER = os.getenv("POSTGRES_USER", "postgres")
+    DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+    DB_NAME = os.getenv("POSTGRES_DB", "ii_vms")
 
 # ── Cache configuration ────────────────────────────────────────────
 CACHE_TTL_SECONDS = int(os.getenv("ANALYTICS_CACHE_TTL", "60"))
