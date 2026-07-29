@@ -35,7 +35,7 @@ COPY db/ ./db/
 COPY scripts/ ./scripts/
 
 # Create uploads directory
-RUN mkdir -p uploads && chown -R appuser:appgroup /app
+RUN mkdir -p uploads && chown -R appuser:appgroup /app /app/uploads
 
 # Switch to non-root user
 USER appuser

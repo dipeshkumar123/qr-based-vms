@@ -5,12 +5,11 @@
 services:
   - type: web
     name: ii-vms-backend
-    runtime: image
+    runtime: docker
     plan: free
     # Render looks for Dockerfile automatically; override to use backend/Dockerfile
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
-    sourceDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     envVars:
       - key: NODE_ENV
         value: production
@@ -21,7 +20,7 @@ services:
       - key: PORT
         value: 4000
       - key: CORS_ORIGIN
-        value: https://your-frontend.vercel.app
+        sync: false
       - key: ADMIN_API_KEY
         generateValue: true
       - key: ADMIN_JWT_SECRET

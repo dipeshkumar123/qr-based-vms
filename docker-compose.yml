@@ -26,7 +26,7 @@ services:
       STORAGE_DIR: /biometric_data
       FACE_MATCH_TOLERANCE: "0.6"
       CONFIDENCE_THRESHOLD: "0.70"
-      BACKEND_URL: "http://host.docker.internal:4000"
+      BACKEND_URL: "http://backend:4000"
     ports:
       - "8000:8000"
     volumes:
@@ -39,6 +39,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ii_vms
+      CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost:3000
+      ADMIN_API_KEY: dev-admin-key-change-in-production
+      ADMIN_JWT_SECRET: dev-jwt-secret-change-in-production
+      BIOMETRIC_SERVICE_URL: http://biometric:8000
+      ANALYTICS_SERVICE_URL: http://analytics:8001
+      UPLOAD_DIR: /app/uploads
+      LOG_LEVEL: debug
+    ports:
+      - "4000:4000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "import('http').then(h=>h.get('http://localhost:4000/health',r=>{process.exit(r.statusCode===200?0:1)}))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
   analytics:
     build:
@@ -66,3 +96,4 @@ services:
 volumes:
   postgres-data:
   biometric_data:
+  uploads_data:

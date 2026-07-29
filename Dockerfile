@@ -27,7 +27,7 @@ COPY --from=builder /app/dist ./dist
 COPY backend/db/ ./db/
 COPY backend/scripts/ ./scripts/
 
-RUN mkdir -p uploads
+RUN mkdir -p uploads && chown -R appuser:appgroup /app
 
 USER appuser
 
